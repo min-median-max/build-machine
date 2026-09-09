@@ -18,6 +18,8 @@ Matching a build target does not make local OS images identical to GitHub-hosted
 
 ## Current implementation status
 
+The macOS [desktop controller](GUI.md) calls the same maintained commands. Its tool results persist separately from VM connection state. Current supported project layouts and framework gaps are defined in [PROJECTS.md](PROJECTS.md). Parallels command stability remains a known issue recorded in [verification.md](verification.md).
+
 Windows and Ubuntu provisioning, doctor, AIRDATA build and visible launch are implemented and verified. The common controller also includes the native macOS worker; macOS provisioning passed, while application and installer acceptance remain pending. Windows installer rehearsal and shared GitHub Actions integration are in progress. Ubuntu 26.04 LTS ARM64 is installed with Parallels Tools. Linux acceptance covers automatic dependency installation, a successful AIRDATA build, a visible application window, and repeated commands that reuse the verified build and process. See [verification.md](verification.md) for actual evidence.
 
 The existing airdata workflow builds a macOS universal app with Node.js 22, pnpm 11 and stable Rust. Its release action publishes to GitHub and conditionally signs/notarizes. The Windows baseline initially used Node.js 24 and built an executable without an installer; that baseline alone does not validate the release workflow.

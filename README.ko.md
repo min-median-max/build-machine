@@ -17,9 +17,18 @@ Codex 없이 실행하고 내용을 확인할 수 있는 빌드 머신 명령을
 
 ## 명령
 
+[Tauri 2 데스크톱 앱](GUI.ko.md)은 프로젝트 선택, Windows/Ubuntu/macOS 선택, 환경 진단, 필수 도구 자동 준비, 빌드, 선택적인 실행, 실시간 로그를 제공합니다. 환경별 마지막 진단/준비 결과와 완료 시각은 앱을 다시 열어도 유지합니다. 연결 상태와 과거 도구 검사 결과는 구분해서 표시합니다. 지원 구조와 남은 프레임워크 검증 범위는 [프로젝트 빌드 조건](PROJECTS.ko.md)에 있습니다.
+
+```sh
+cd ~/Work/build-machine
+python3 desktop.py build --run
+```
+
+빌드 후에는 `gui/src-tauri/target/release/bundle/macos/Build Machine.app`을 직접 열면 됩니다. 첫 macOS 앱은 서명하지 않았으며 내부적으로 이 체크아웃과 Python이 필요합니다. `python3 desktop.py dev`는 React와 Rust/Tauri 개발을 함께 실행하고, `python3 desktop.py test`는 화면 빌드·Rust 연결·브라우저 동작을 검사합니다. GUI는 미완성인 릴리즈 게시 기능을 노출하지 않습니다.
+
 맥에는 Python 3, Git, `prlctl exec`를 지원하는 Parallels와 Parallels Tools가 필요합니다. 선택한 VM이 실행 중이고 데스크톱 사용자가 로그인해 있어야 합니다. Linux에는 Python 3.10 이상이 필요하며 Ubuntu 26.04에는 Python 3.14가 있습니다. VM 이름과 도구 버전은 [machine.json](machine.json)에 있습니다.
 
-공통 제어 명령은 `windows`, `linux`, `macos`, `all`을 선택합니다. `--os`를 생략하면 세 운영체제를 선택합니다. 여러 플랫폼을 빌드할 때 소스 스냅샷을 한 번 만들고, 선택한 각 플랫폼을 실행하고 결과를 기록합니다. 하나라도 실패하면 전체 명령도 실패합니다.
+공통 제어 명령은 `windows`, `linux`, `macos`, `all`을 선택합니다. `--os windows linux`처럼 여러 이름을 지정할 수 있으며, `--os`를 생략하면 세 운영체제를 선택합니다. 여러 플랫폼을 빌드할 때 소스 스냅샷을 한 번 만들고, 선택한 각 플랫폼을 실행하고 결과를 기록합니다. 하나라도 실패하면 전체 명령도 실패합니다. `--result-file PATH`는 다른 인터페이스를 위한 구조화된 결과를 기록합니다. 진단/준비 결과와 시각은 `.state/tool-status.json`에 유지하며 머신 설정이 바뀌면 이전 결과를 표시하지 않습니다.
 
 ```sh
 cd ~/Work/build-machine
@@ -50,6 +59,10 @@ Linux는 같은 공유 폴더를 `/media/psf/WindowsBuildMachine`에서 읽습�
 MSVC는 Microsoft가 유지보수하는 Visual Studio 2022 채널을 사용하며 필수 구성 요소를 확인합니다. 다른 도구 버전과 다운로드 체크섬은 `machine.json`에 고정합니다. 구성 요소를 충족하는 기존 MSVC 설치는 자동 업그레이드하지 않습니다. 반복 가능한 환경 구성이며, 컴파일 결과의 바이트 단위 동일성을 보장한다는 의미는 아닙니다.
 
 ## 검증
+
+네이티브 GUI는 `python3 tests/native_gui.py doctor --os windows linux macos` 또는 `python3 tests/native_gui.py setup --os linux --restart`로 검사합니다. 실제 macOS 앱 컨트롤을 누르고 실제 결과를 검사한 뒤 앱 창을 캡처합니다. 명령을 실행하는 앱에 macOS 손쉬운 사용과 화면 캡처 접근이 필요합니다. 준비 검사는 정의된 누락 도구를 설치할 수 있습니다. 다시 연 화면의 결과 표시는 캡처를 확인해야 하며 브라우저 모의만으로 네이티브 동작이 확인되지는 않습니다.
+
+로컬 검사에서 Parallels 27.0.1의 `prlctl exec`가 간헐적으로 실패했습니다. `python3 tests/parallels_smoke.py --transport prlctl --iterations 30`은 무해한 게스트 명령으로 사용자·출력·종료 상태를 검사합니다. 반복 가능한 이 검사는 실행 도구를 고치지는 않습니다. 실패한 게스트 작업은 자동 재실행하지 않고 실패로 보고합니다. 관찰한 오류와 한계는 [verification.md](verification.md)에 기록합니다.
 
 macOS 또는 Linux에서 `python3 -m unittest discover -s tests`를 실행합니다. 실제 환경의 완료 기준은 반복 도구 준비 성공, 실제 빌드와 앱 창 표시, 반복 빌드·실행 시 검증된 결과와 실행 중인 프로세스 재사용입니다. 실제 결과와 아직 실행 검증하지 않은 플랫폼·프레임워크는 [verification.md](verification.md)에 기록합니다.
 

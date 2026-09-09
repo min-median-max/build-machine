@@ -17,9 +17,18 @@ This repository provides inspectable build-machine commands that run without Cod
 
 ## Commands
 
+The [Tauri 2 desktop app](GUI.md) provides project selection, Windows/Ubuntu/macOS selection, diagnosis, automatic prerequisite setup, build, optional launch and live logs. Each environment retains its last diagnosis/setup result and completion time across app restarts. Connection state and historical tool checks are displayed separately. [Project build requirements](PROJECTS.md) describe the supported layouts and remaining framework coverage.
+
+```sh
+cd ~/Work/build-machine
+python3 desktop.py build --run
+```
+
+After building, open `gui/src-tauri/target/release/bundle/macos/Build Machine.app` directly. This initial macOS app is unsigned and still needs this checkout and Python internally. `python3 desktop.py dev` starts React and Rust/Tauri development together; `python3 desktop.py test` verifies the frontend build, Rust bridge and browser interactions. The GUI does not expose unfinished release publication.
+
 Requirements on the Mac: Python 3, Git, and Parallels with working `prlctl exec` and Parallels Tools. The selected VM must be running with a desktop user signed in. Linux requires Python 3.10 or later; Ubuntu 26.04 supplies Python 3.14. The VM names and tool versions are in [machine.json](machine.json).
 
-The common controller selects `windows`, `linux`, `macos` or `all`. Omitting `--os` selects all three. A multi-platform build captures one source snapshot, attempts each selected platform, records each result and fails overall if any platform fails.
+The common controller selects `windows`, `linux`, `macos` or `all`. Supply multiple names with `--os windows linux`; omitting `--os` selects all three. A multi-platform build captures one source snapshot, attempts each selected platform, records each result and fails overall if any platform fails. `--result-file PATH` writes the structured result for other interfaces. Diagnosis/setup results and timestamps persist in `.state/tool-status.json`; changed machine configuration invalidates those displayed results.
 
 ```sh
 cd ~/Work/build-machine
@@ -50,6 +59,10 @@ Linux reads the same share at `/media/psf/WindowsBuildMachine`. Linux and macOS 
 MSVC uses Microsoft's serviced Visual Studio 2022 channel and verifies required components. Other tool versions and download checksums are pinned in `machine.json`. Setup does not automatically upgrade an existing MSVC installation that satisfies the component requirements. This is repeatable provisioning, not a claim of bit-for-bit reproducible compiler output.
 
 ## Verification
+
+Native GUI checks use `python3 tests/native_gui.py doctor --os windows linux macos` or `python3 tests/native_gui.py setup --os linux --restart`. They press actual macOS app controls, verify the real result, and capture the app window. They require macOS Accessibility and screen-capture access for the invoking application. Setup can install declared missing prerequisites. Inspect the capture to verify visible results after reopening; browser mocks alone do not establish native behavior.
+
+Parallels 27.0.1 has produced intermittent `prlctl exec` errors during local checks. `python3 tests/parallels_smoke.py --transport prlctl --iterations 30` runs harmless guest commands and checks identity, output and exit status. This reproducible probe does not repair the execution client. Failed guest operations are reported without automatic replay; see [verification.md](verification.md) for the observed failures and limits.
 
 Run `python3 -m unittest discover -s tests` on macOS or Linux. Live acceptance requires successful repeated provisioning, an actual build and visible application launch, and repeated build/run commands that reuse the verified result and running process. Actual results are recorded in [verification.md](verification.md); platform and framework support that has not been exercised is stated there.
 

@@ -5,6 +5,7 @@ import datetime
 import fcntl
 import json
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -21,20 +22,24 @@ class Runner:
 
     def call(self, args, capture=False):
         args = [str(arg) for arg in args]
-        print('> ' + ' '.join(args), flush=True)
+        display = shlex.join(args)
+        print('> ' + display, flush=True)
         with self.log.open('ab') as log:
-            process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            log.write(('> ' + display + '\n').encode())
+            log.flush()
             chunks = []
-            for line in iter(process.stdout.readline, b''):
-                log.write(line)
-                log.flush()
-                chunks.append(line)
-                if not capture:
-                    print(decode_output(line).rstrip(), flush=True)
-            code = process.wait()
+            with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+                for line in iter(process.stdout.readline, b''):
+                    log.write(line)
+                    log.flush()
+                    chunks.append(line)
+                    if not capture:
+                        print(decode_output(line).rstrip(), flush=True)
+                code = process.wait()
+            log.write(('Exit code: %s\n' % code).encode())
         output = decode_output(b''.join(chunks))
         if code:
-            raise RuntimeError('Command failed (%s). %s\nLog: %s' % (code, output[-2500:], self.log))
+            raise RuntimeError('Command failed (%s): %s\n%s\nLog: %s' % (code, display, output[-2500:], self.log))
         return output
 
     def prepare(self):
@@ -86,12 +91,26 @@ class Runner:
         self.worker(args.action, request=request, run=getattr(args, 'run', False))
 
 
+def record_tool_status(config, action, platform, result, log):
+    if action not in ('doctor', 'setup'):
+        return
+    path = STATE / 'tool-status.json'
+    status = json.loads(path.read_text()) if path.exists() else {}
+    if status.get('configuration') != config:
+        status = {'configuration': config, 'results': {}}
+    status['results'][platform] = dict(result, action=action, log=str(log))
+    partial = path.with_suffix('.partial')
+    partial.write_text(json.dumps(status, indent=2) + '\n')
+    partial.replace(path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='action', required=True)
     for action in ('doctor','setup','build','run','release'):
         command = commands.add_parser(action)
-        command.add_argument('--os', choices=['windows','linux','macos','all'], default='all')
+        command.add_argument('--os', nargs='+', choices=['windows','linux','macos','all'], default=['all'])
+        command.add_argument('--result-file', type=Path, help='Write the structured operation result to this file')
         if action in ('build','run','release'):
             command.add_argument('project', type=Path)
         if action in ('build','release'):
@@ -102,7 +121,9 @@ def main():
     args = parser.parse_args()
     if sys.platform != 'darwin':
         parser.error('Run this controller on macOS; native.py and windows/*.ps1 are the native workers.')
-    platforms = ['windows','linux','macos'] if args.os == 'all' else [args.os]
+    if 'all' in args.os and len(args.os) != 1:
+        parser.error('Use --os all alone, or list the individual platforms.')
+    platforms = ['windows','linux','macos'] if args.os == ['all'] else list(dict.fromkeys(args.os))
     STATE.mkdir(exist_ok=True)
     try:
         with (STATE / 'machine.lock').open('w') as lock:
@@ -142,8 +163,15 @@ def main():
                 except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
                     results[platform] = {'success':False, 'error':str(error)}
                     print('ERROR: ' + str(error), file=sys.stderr, flush=True)
+                results[platform]['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                record_tool_status(config, args.action, platform, results[platform], log)
             report = {'action':args.action, 'source':snapshot, 'results':results, 'log':str(log)}
             (STATE / (stamp + '-result.json')).write_text(json.dumps(report, indent=2) + '\n')
+            if args.result_file:
+                args.result_file.parent.mkdir(parents=True, exist_ok=True)
+                partial = args.result_file.with_name(args.result_file.name + '.partial')
+                partial.write_text(json.dumps(report, indent=2) + '\n')
+                partial.replace(args.result_file)
             print(json.dumps(report, indent=2), flush=True)
             return 0 if all(result['success'] for result in results.values()) else 1
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:

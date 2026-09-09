@@ -18,6 +18,8 @@
 
 ## 현재 구현 상태
 
+macOS [데스크톱 제어 앱](GUI.ko.md)은 유지보수하는 같은 명령을 호출합니다. 도구 검사 결과는 VM 연결 상태와 구분해서 유지합니다. 현재 지원하는 프로젝트 구조와 프레임워크별 미지원 범위는 [PROJECTS.ko.md](PROJECTS.ko.md)에 정의합니다. Parallels 명령의 간헐적 실패는 [verification.md](verification.md)에 기록한 알려진 문제입니다.
+
 Windows와 Ubuntu의 도구 준비·doctor·AIRDATA 빌드·실제 창 표시를 구현하고 검증했습니다. 공통 제어 명령에는 네이티브 macOS 작업 스크립트도 포함됩니다. macOS 도구 준비는 통과했고 앱과 설치 패키지 검증은 남아 있습니다. Windows 설치 패키지 검사와 GitHub Actions의 공통 스크립트 연결은 진행 중입니다. Ubuntu 26.04 LTS ARM64와 Parallels Tools가 설치되어 있습니다. Linux 승인 기준은 의존성 자동 설치, AIRDATA 빌드 성공, 실제 앱 창 표시, 반복 명령에서 검증된 빌드와 프로세스 재사용입니다. 실제 증거는 [verification.md](verification.md)에 있습니다.
 
 기존 airdata 워크플로는 Node.js 22, pnpm 11, stable Rust로 macOS 유니버설 앱을 빌드합니다. 릴리즈 액션이 GitHub에 게시하고 조건에 따라 서명·공증합니다. 초기 Windows 검증에서는 Node.js 24를 사용했고 설치 패키지 없이 실행 파일을 빌드했습니다. 그것만으로 기존 릴리즈 워크플로를 검증했다고 볼 수는 없습니다.

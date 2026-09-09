@@ -10,6 +10,7 @@ if os.name != 'nt':
     import fcntl
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -115,7 +116,13 @@ class Machine:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def cli(self, *args):
-        result = subprocess.run([self.prlctl, *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        command = [self.prlctl, *args]
+        with self.log_path.open('ab') as log:
+            log.write(('> ' + shlex.join(command) + '\n').encode())
+            log.flush()
+            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            log.write(result.stdout)
+            log.write(('\nExit code: %s\n' % result.returncode).encode())
         if result.returncode:
             raise RuntimeError(decode_output(result.stdout).strip())
         return decode_output(result.stdout)
@@ -128,14 +135,22 @@ class Machine:
             command.append('--current-user')
         command += ['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded]
         with self.log_path.open('ab') as log:
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            for line in iter(process.stdout.readline, b''):
-                log.write(line)
-                log.flush()
-                print(decode_output(line).rstrip(), flush=True)
-            code = process.wait()
+            log.write(('> Windows PowerShell (%s): %s\n' % ('SYSTEM' if system else 'desktop user', script)).encode())
+            log.flush()
+            chunks = []
+            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+                for line in iter(process.stdout.readline, b''):
+                    chunks.append(line)
+                    log.write(line)
+                    log.flush()
+                    print(decode_output(line).rstrip(), flush=True)
+                code = process.wait()
+            log.write(('Exit code: %s\n' % code).encode())
         if code:
-            raise RuntimeError('Windows command failed with exit code %s. Log: %s' % (code, self.log_path))
+            output = decode_output(b''.join(chunks)).strip()
+            details = [line.removeprefix('ERROR: ') for line in output.splitlines() if line.startswith('ERROR: ')]
+            reason = '\n'.join(details) if details else output[-2500:]
+            raise RuntimeError('Windows command failed with exit code %s.\n%s\nLog: %s' % (code, reason, self.log_path))
 
     def prepare(self):
         info = json.loads(self.cli('list', '-i', '--json', self.vm))[0]

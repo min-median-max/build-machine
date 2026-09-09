@@ -1,5 +1,7 @@
 # Verification
 
+The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment results and known intermittent Parallels execution failure are recorded separately in [GUI-VERIFICATION.md](GUI-VERIFICATION.md).
+
 The Windows and Ubuntu build and launch baselines passed on 2026-09-09. Three-OS release rehearsal, installer verification, and GitHub Actions parity are not complete.
 
 - Host: macOS ARM64; Parallels Desktop 27.0.1 (58670).
