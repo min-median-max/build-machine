@@ -81,6 +81,20 @@ fn invalid_platform_is_rejected_before_a_child_starts() {
 }
 
 #[test]
+fn zero_exit_with_only_a_partial_report_is_not_success() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("machine.json"), "{}").unwrap();
+    fs::write(directory.path().join("build.py"), r#"
+import json, pathlib, sys
+result = pathlib.Path(sys.argv[sys.argv.index('--result-file') + 1])
+result.parent.mkdir(parents=True, exist_ok=True)
+result.write_text(json.dumps({'status': 'running', 'results': {'linux': {'success': True}}}))
+"#).unwrap();
+    let result = controller::execute(request(directory.path()), Arc::new(|_| {}));
+    assert!(result.unwrap_err().contains("완료 결과"));
+}
+
+#[test]
 #[ignore = "Requires the configured running Ubuntu Parallels VM; performs read-only tool diagnosis"]
 fn real_ubuntu_doctor() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();

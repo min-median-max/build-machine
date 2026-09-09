@@ -3,7 +3,7 @@ use std::{fs, path::Path, process::Command};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Page { Environment, Projects }
+pub enum Page { Dashboard, Environment, Projects }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,7 +41,7 @@ pub fn save(path: &Path, preferences: &Preferences) -> Result<(), String> {
 
 pub fn load(path: &Path, controller_path: String) -> Result<Preferences, String> {
     let mut preferences = Preferences { controller_path, environment_platforms: all_platforms(),
-        projects: vec![], selected_project: None, page: Page::Projects };
+        projects: vec![], selected_project: None, page: Page::Dashboard };
     if path.is_file() {
         let value: serde_json::Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         if value.get("projects").is_some() {

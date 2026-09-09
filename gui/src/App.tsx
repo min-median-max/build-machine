@@ -6,12 +6,13 @@ import { EnvironmentWorkspace } from './EnvironmentWorkspace';
 import { ProjectWorkspace } from './ProjectWorkspace';
 import { WorkspaceSidebar } from './WorkspaceSidebar';
 import { LogPanel } from './LogPanel';
+import { Dashboard } from './Dashboard';
 import { actionLabels, platformNames, type Project, type WorkspacePage, type Action, type JobOutcome, type OutputLine, type Overview, type Platform, type Preferences, type ResultState } from './types';
 
 const clean = (value: string) => value.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 
 export default function App() {
-  const [preferences, setPreferences] = useState<Preferences>({ controllerPath: '', environmentPlatforms: ['windows', 'linux', 'macos'], projects: [], selectedProject: null, page: 'projects' });
+  const [preferences, setPreferences] = useState<Preferences>({ controllerPath: '', environmentPlatforms: ['windows', 'linux', 'macos'], projects: [], selectedProject: null, page: 'dashboard' });
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<Action | null>(null);
@@ -21,6 +22,7 @@ export default function App() {
   const [results, setResults] = useState<Partial<Record<Platform, ResultState>>>({});
   const [lastOutcome, setLastOutcome] = useState<{ success: boolean; action: Action; seconds: number } | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [jobProject, setJobProject] = useState<string | null>(null);
   const startTime = useRef(0);
   const pending = useRef<OutputLine[]>([]);
 
@@ -53,7 +55,8 @@ export default function App() {
   };
   const clearTask = () => { setError(''); setLines([]); setLastOutcome(null); };
   const navigate = (page: WorkspacePage, selectedProject = preferences.selectedProject) => {
-    clearTask(); void save({ ...preferences, page, selectedProject });
+    if (!busy) clearTask();
+    void save({ ...preferences, page, selectedProject });
   };
   const chooseController = async () => {
     try {
@@ -82,6 +85,7 @@ export default function App() {
     const platforms = environmentAction ? preferences.environmentPlatforms : project?.platforms || [];
     if (!platforms.length || (!environmentAction && !project)) return;
     setBusy(action); setError(''); setLines([]); setLastOutcome(null); setActive(null); setElapsed(0);
+    setJobProject(environmentAction ? null : project!.path);
     pending.current = []; startTime.current = Date.now();
     const stream = new Channel<OutputLine>();
     const processErrors: string[] = [];
@@ -108,11 +112,17 @@ export default function App() {
   };
   const openLogs = async () => { try { await invoke('open_log_folder', { controllerPath: preferences.controllerPath }); } catch (e) { setError(String(e)); } };
   const openSettings = async () => { try { await invoke('open_settings_folder'); } catch (e) { setError(String(e)); } };
+  const openBuildLog = async (path: string) => { try { await invoke('open_build_log', { controllerPath: preferences.controllerPath, path }); } catch (e) { setError(String(e)); } };
   const environmentPage = preferences.page === 'environment';
+  const dashboardPage = preferences.page === 'dashboard';
 
   return <div className="app-shell">
-    <WorkspaceSidebar preferences={preferences} disabled={!!busy} onSelect={path => navigate('projects', path)} onAdd={() => void addProject()} onSettings={() => navigate('environment')}/>
+    <WorkspaceSidebar preferences={preferences} disabled={!!busy} activeProject={jobProject} onSelect={path => navigate('projects', path)} onAdd={() => void addProject()} onSettings={() => navigate('environment')} onDashboard={() => navigate('dashboard')}/>
     <main>
+      {dashboardPage ? <>
+        {error && <div className="error-banner" role="alert"><Icon name="alert" size={17}/><pre>{error}</pre><button aria-label="오류 메시지 닫기" onClick={() => setError('')}>×</button></div>}
+        <Dashboard showError={!error} controllerPath={preferences.controllerPath} projects={preferences.projects} job={busy ? { action: busy, projectPath: jobProject, platform: active, seconds: elapsed } : null} onSelect={path => navigate('projects', path)} onAdd={() => void addProject()} onViewJob={() => navigate(jobProject ? 'projects' : 'environment', jobProject || preferences.selectedProject)} onOpenLog={path => void openBuildLog(path)}/>
+      </> : <>
       <header><div><h1>{environmentPage ? '설정' : project?.path.split('/').filter(Boolean).at(-1) || '프로젝트 등록'}</h1><p>{environmentPage ? '모든 프로젝트가 공유하는 빌드 환경을 관리하세요.' : project ? '빌드 대상을 설정하고, 준비된 환경에서 빌드·실행하세요.' : '+ 버튼으로 빌드할 프로젝트 폴더를 등록하세요.'}</p></div>
         {environmentPage ? <button className="refresh-button" disabled={!!busy || loading || !preferences.controllerPath} onClick={() => { setError(''); void refresh(preferences.controllerPath); }}><Icon name="refresh" className={loading ? 'spin' : ''} size={15}/>연결 새로고침</button> : null}
       </header>
@@ -120,6 +130,7 @@ export default function App() {
       <div className="operation-summary" role="status"><div>{busy ? <><span className="spinner"/>{actionLabels[busy]} 중{active ? ` · ${platformNames[active]}` : ''}</> : lastOutcome ? <><span className={`result-symbol ${lastOutcome.success ? 'success' : 'failure'}`}><Icon name={lastOutcome.success ? 'check' : 'alert'} size={13}/></span>{actionLabels[lastOutcome.action]} {lastOutcome.success ? '완료' : '실패'}</> : <><span className="idle-dot"/>작업 대기 중<span className="summary-hint">{environmentPage && !Object.keys(results).length ? '환경 진단부터 시작할 수 있어요' : '실행할 작업을 선택하세요'}</span></>}</div><span className="duration"><Icon name="clock" size={13}/>{busy ? `${elapsed}초` : lastOutcome ? `${lastOutcome.seconds}초` : '—'}</span></div>
       {error && <div className="error-banner" role="alert"><Icon name="alert" size={17}/><pre>{error}</pre><button aria-label="오류 메시지 닫기" onClick={() => setError('')}>×</button></div>}
       <LogPanel lines={lines} busy={!!busy} onOpenLogs={() => void openLogs()}/>
+      </>}
     </main>
   </div>;
 }

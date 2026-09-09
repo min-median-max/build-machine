@@ -104,6 +104,67 @@ def record_tool_status(config, action, platform, result, log):
     partial.replace(path)
 
 
+def write_report(report, path, result_file):
+    for destination in dict.fromkeys([path] + ([result_file] if result_file else [])):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        partial = destination.with_name(destination.name + '.partial')
+        partial.write_text(json.dumps(report, indent=2) + '\n')
+        partial.replace(destination)
+
+
+def execute_operation(args, platforms, stamp, log):
+    report_path = STATE / (stamp + '-result.json')
+    report = {'action': args.action, 'project': str(args.project.expanduser().resolve()) if hasattr(args, 'project') else None,
+              'platforms': platforms, 'status': 'running',
+              'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'source': None, 'results': {}, 'log': str(log)}
+    write_report(report, report_path, args.result_file)
+    try:
+        config = json.loads((ROOT / 'machine.json').read_text())
+        snapshot = snapshot_project(args) if args.action in ('build', 'release') else None
+        if args.action == 'run':
+            snapshot = {'projectKey': project_key(args.project.expanduser().resolve())}
+        report['source'] = snapshot
+        for platform in platforms:
+            print('PLATFORM: ' + platform, flush=True)
+            try:
+                if platform == 'windows':
+                    machine = Machine(config)
+                    machine.log_path = log
+                    machine.prepare()
+                    if args.action == 'doctor':
+                        machine.script('Doctor.ps1')
+                    elif args.action == 'run':
+                        machine.run(args.project)
+                    else:
+                        machine.setup()
+                        if args.action == 'build':
+                            machine.build(args, snapshot)
+                        elif args.action == 'release':
+                            raise RuntimeError('Windows installer rehearsal is not implemented yet. Use build --run for executable validation.')
+                else:
+                    Runner(config, platform, log).execute(args, snapshot)
+                result = {'success': True}
+            except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+                result = {'success': False, 'error': str(error)}
+                print('ERROR: ' + str(error), file=sys.stderr, flush=True)
+            result['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            report['results'][platform] = result
+            record_tool_status(config, args.action, platform, result, log)
+            write_report(report, report_path, args.result_file)
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        report['error'] = str(error)
+        with log.open('a') as output:
+            output.write('ERROR: ' + str(error) + '\n')
+        print('ERROR: ' + str(error), file=sys.stderr, flush=True)
+    success = not report.get('error') and len(report['results']) == len(platforms) and all(result['success'] for result in report['results'].values())
+    report['status'] = 'success' if success else 'failure'
+    report['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    write_report(report, report_path, args.result_file)
+    print(json.dumps(report, indent=2), flush=True)
+    return 0 if success else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='action', required=True)
@@ -131,49 +192,11 @@ def main():
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise RuntimeError('Another build-machine command is running. Wait for its result.')
-            config = json.loads((ROOT / 'machine.json').read_text())
             stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
             log = STATE / 'logs' / (stamp + '-matrix.log')
             log.parent.mkdir(parents=True, exist_ok=True)
             print('Host log:', log, flush=True)
-            snapshot = snapshot_project(args) if args.action in ('build','release') else None
-            if args.action == 'run':
-                snapshot = {'projectKey': project_key(args.project.expanduser().resolve())}
-            results = {}
-            for platform in platforms:
-                print('PLATFORM: ' + platform, flush=True)
-                try:
-                    if platform == 'windows':
-                        machine = Machine(config)
-                        machine.log_path = log
-                        machine.prepare()
-                        if args.action == 'doctor':
-                            machine.script('Doctor.ps1')
-                        elif args.action == 'run':
-                            machine.run(args.project)
-                        else:
-                            machine.setup()
-                            if args.action == 'build':
-                                machine.build(args, snapshot)
-                            elif args.action == 'release':
-                                raise RuntimeError('Windows installer rehearsal is not implemented yet. Use build --run for executable validation.')
-                    else:
-                        Runner(config, platform, log).execute(args, snapshot)
-                    results[platform] = {'success':True}
-                except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
-                    results[platform] = {'success':False, 'error':str(error)}
-                    print('ERROR: ' + str(error), file=sys.stderr, flush=True)
-                results[platform]['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                record_tool_status(config, args.action, platform, results[platform], log)
-            report = {'action':args.action, 'source':snapshot, 'results':results, 'log':str(log)}
-            (STATE / (stamp + '-result.json')).write_text(json.dumps(report, indent=2) + '\n')
-            if args.result_file:
-                args.result_file.parent.mkdir(parents=True, exist_ok=True)
-                partial = args.result_file.with_name(args.result_file.name + '.partial')
-                partial.write_text(json.dumps(report, indent=2) + '\n')
-                partial.replace(args.result_file)
-            print(json.dumps(report, indent=2), flush=True)
-            return 0 if all(result['success'] for result in results.values()) else 1
+            return execute_operation(args, platforms, stamp, log)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         print('ERROR:', error, file=sys.stderr)
         return 1

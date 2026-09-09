@@ -141,11 +141,19 @@ pub fn execute(request: JobRequest, emit: Arc<dyn Fn(OutputLine) + Send + Sync>)
     stream(child.stdout.take().ok_or("출력 스트림이 없어요.")?, "stdout", &emit);
     let status = child.wait().map_err(|e| e.to_string())?;
     error_thread.join().map_err(|_| "오류 로그 처리에 실패했어요.")?;
-    let result = if result_path.exists() {
+    let result: Option<Value> = if result_path.exists() {
         Some(serde_json::from_slice(&fs::read(&result_path).map_err(|e| e.to_string())?).map_err(|e| format!("결과 파일을 읽지 못했어요: {e}"))?)
     } else if status.success() {
         return Err(format!("명령은 종료됐지만 결과 파일이 없어서 성공을 확인할 수 없어요: {}", result_path.display()));
     } else { None };
+    if status.success() {
+        if let Some(report) = &result {
+            if report.get("status").is_some() && (report["status"] != "success"
+                || request.platforms.iter().any(|os| report["results"][os]["success"] != true)) {
+                return Err(format!("명령은 종료됐지만 완료 결과가 확인되지 않았어요: {}", result_path.display()));
+            }
+        }
+    }
     Ok(JobOutcome { exit_code: status.code().unwrap_or(-1), result, result_path: result_path.to_string_lossy().into_owned() })
 }
 

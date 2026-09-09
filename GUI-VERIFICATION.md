@@ -26,6 +26,17 @@ Verified on 2026-09-09 in the working tree based on `7c78a15`. The tested `gui/`
 
 Registration/settings changes are saved in the existing application configuration directory. AIRDATA sources remain clean. These navigation checks did not rebuild or relaunch AIRDATA and do not establish three-OS release completion.
 
+## Dashboard and operation reports
+
+Verified on 2026-09-09 in the working tree based on `8640de2`. The tested `gui/` Git tree is `ff571a6672f76673c85696580cc5cb954664b928`; the `build.py` SHA-256 is `b3122b81dbab7067ce91d6e2607a068cbdf58fff6f0739240801d27568555d4a`. The deployed executable SHA-256 is `34b21efd55625f2ad8639bc4db8de591699d1069610149c5ab672827f5feb8e7`, using the same unsigned ARM64 `0.0.1` bundle path.
+
+- Python: 16 tests passed. New isolated tests verify that a source-preparation failure has a persistent failed report and that a completed platform is recorded before the next starts.
+- Rust: 13 tests passed; the real-Ubuntu bridge check remains opt-in. Dashboard tests exclude unregistered projects and transfer requests, retain the latest failed/incomplete result, expose unreadable history and restrict log opening to the controller's log directory. A child that exits zero with only an unfinished report is rejected.
+- Browser: 12 tests passed with explicit mocked desktop APIs. Dashboard tests verify summary counts, direct project navigation, opening the selected log, navigation during a running build, disabled mutation controls and failed-result persistence after reload. Empty/unreadable history does not establish success.
+- `python3 tests/native_dashboard.py --restart` passed against the built app. The actual dashboard displayed one registered AIRDATA project and three existing Ubuntu build records. Its latest recorded Ubuntu build was successful. Project-row navigation opened AIRDATA build controls, and the Dashboard view remained selected after reopening. Evidence: `.state/gui-dashboard.json` and `.state/gui-native-dashboard.png`.
+
+The browser dashboard capture `.state/gui-browser-dashboard.png` uses fixtures. The native capture reads actual controller reports. This check did not rebuild AIRDATA, relaunch its guest apps, install tools or create a new release. Existing Windows-only transfer requests are not treated as completed build reports. Native observation of an active build was not repeated; progress behavior is covered by browser tests and controlled child-process tests.
+
 ## Known Parallels execution failure
 
 Ubuntu setup at 19:48:07 failed with exit 255 and `PrlJob_GetResult: Invalid argument`. The actual failed invocation was root `prlctl exec ... native.py setup-system`. The same action later succeeded without an execution-client fix.

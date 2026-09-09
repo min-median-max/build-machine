@@ -1,4 +1,5 @@
 pub mod controller;
+pub mod dashboard;
 pub mod preferences;
 
 use controller::{JobOutcome, JobRequest, OutputLine};
@@ -51,6 +52,18 @@ async fn get_overview(controller_path: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn get_dashboard(controller_path: String, project_paths: Vec<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || dashboard::read(&controller::controller_root(&controller_path)?, &project_paths)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn open_build_log(controller_path: String, path: String) -> Result<(), String> {
+    let log = dashboard::log_path(&controller::controller_root(&controller_path)?, &path)?;
+    let status = std::process::Command::new("/usr/bin/open").arg("-t").arg(log).status().map_err(|e| e.to_string())?;
+    if status.success() { Ok(()) } else { Err("빌드 로그를 열지 못했어요.".into()) }
+}
+
+#[tauri::command]
 async fn start_job(request: JobRequest, on_output: Channel<OutputLine>, jobs: tauri::State<'_, Jobs>) -> Result<JobOutcome, String> {
     if jobs.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return Err("이미 작업을 실행 중이에요.".into());
@@ -71,7 +84,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(Jobs::default())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![load_preferences, save_preferences, register_project, open_settings_folder, get_overview, start_job, open_log_folder])
+        .invoke_handler(tauri::generate_handler![load_preferences, save_preferences, register_project, open_settings_folder, get_overview, get_dashboard, open_build_log, start_job, open_log_folder])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.state::<Jobs>().busy.load(Ordering::SeqCst) { api.prevent_close(); }

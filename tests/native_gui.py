@@ -66,7 +66,7 @@ end tell
         new_reports = set(reports.glob('*.json')) - before
         for path in new_reports:
             report = json.loads(path.read_text())
-            if report['action'] == args.action and set(report['results']) == set(args.os):
+            if report['action'] == args.action and report.get('status') != 'running' and set(report['results']) == set(args.os):
                 result = report
                 print('Native UI result: ' + str(path), flush=True)
                 print(json.dumps(result, indent=2), flush=True)
