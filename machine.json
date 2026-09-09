@@ -4,11 +4,13 @@
   "windowsRoot": "C:\\BuildMachine",
   "architecture": "arm64",
   "node": {
-    "version": "24.21.0",
-    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-arm64.zip",
-    "sha256": "8779b1bde1d39f8d420e3b57aa657b39891af434d3de44a919044cec06785921"
+    "version": "22.23.2",
+    "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-win-arm64.zip",
+    "sha256": "fec025a6da31757e3b6af84c5a1628e9d38442ca99a2161091d78f2fcfa35ef3"
   },
-  "pnpm": {"version": "11.24.0"},
+  "pnpm": {
+    "version": "11.24.0"
+  },
   "rust": {
     "version": "1.98.1",
     "host": "aarch64-pc-windows-msvc",
@@ -34,5 +36,54 @@
       "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
       "Microsoft.VisualStudio.Component.Windows11SDK.26100"
     ]
+  },
+  "platforms": {
+    "windows": {
+      "vm": "Windows 11",
+      "runner": "windows-11-arm",
+      "target": "aarch64-pc-windows-msvc",
+      "bundle": "nsis"
+    },
+    "macos": {
+      "runner": "macos-14",
+      "target": "universal-apple-darwin",
+      "bundle": "dmg",
+      "nodeUrl": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-darwin-arm64.tar.gz",
+      "nodeSha256": "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6",
+      "goUrl": "https://go.dev/dl/go1.27.1.darwin-arm64.tar.gz",
+      "goSha256": "ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12",
+      "rustupUrl": "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-apple-darwin/rustup-init",
+      "rustupSha256": "ec1b9233e7f72990ecd8e62063fa7f6c3dfc2bec8e97f88bff165f9100ac696a"
+    },
+    "linux": {
+      "vm": "Ubuntu 26.04 ARM64",
+      "runner": "ubuntu-26.04-arm",
+      "target": "aarch64-unknown-linux-gnu",
+      "bundle": "deb",
+      "nodeUrl": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-arm64.tar.xz",
+      "nodeSha256": "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8",
+      "goUrl": "https://go.dev/dl/go1.27.1.linux-arm64.tar.gz",
+      "goSha256": "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
+      "rustupUrl": "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init",
+      "rustupSha256": "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433",
+      "packages": [
+        "build-essential",
+        "curl",
+        "wget",
+        "file",
+        "pkg-config",
+        "libwebkit2gtk-4.1-dev",
+        "libxdo-dev",
+        "libssl-dev",
+        "libayatana-appindicator3-dev",
+        "librsvg2-dev",
+        "patchelf",
+        "fakeroot",
+        "dpkg-dev",
+        "xvfb",
+        "xauth",
+        "wmctrl"
+      ]
+    }
   }
 }

@@ -3,10 +3,11 @@
 import argparse
 import base64
 import datetime
-import fcntl
 import hashlib
 import json
 import os
+if os.name != 'nt':
+    import fcntl
 from pathlib import Path
 import re
 import shutil
@@ -72,6 +73,32 @@ def controller_files():
 
 def controller_hash():
     return digest(b''.join(path.relative_to(ROOT).as_posix().encode() + b'\0' + path.read_bytes() + b'\0' for path in controller_files()))
+
+
+def snapshot_project(args):
+    project = args.project.expanduser().resolve()
+    key = project_key(project)
+    transfer = STATE / 'projects' / key
+    transfer.mkdir(parents=True, exist_ok=True)
+    temporary = transfer / 'source.pending.zip'
+    source = make_source_archive(project, temporary)
+    archive = transfer / (source['sourceHash'] + '.zip')
+    if archive.exists():
+        temporary.unlink()
+    else:
+        temporary.replace(archive)
+    framework = args.framework
+    if framework == 'auto':
+        if (project / 'src-tauri' / 'tauri.conf.json').is_file():
+            framework = 'tauri'
+        elif (project / 'wails.json').is_file():
+            framework = 'wails2'
+        else:
+            raise ValueError('Use --framework custom --command COMMAND --artifact RELATIVE_PATH for this project.')
+    if framework == 'custom' and (not args.command or not args.artifact):
+        raise ValueError('Custom builds require --command and --artifact.')
+    return dict(source, framework=framework, command=args.command, artifact=args.artifact,
+                projectKey=key, project=str(project), archive=str(archive))
 
 
 class Machine:
@@ -154,31 +181,15 @@ class Machine:
         self.script('Setup-User.ps1')
         self.script('Doctor.ps1')
 
-    def build(self, args):
-        project = args.project.expanduser().resolve()
-        key = project_key(project)
+    def build(self, args, snapshot=None):
+        source = snapshot or snapshot_project(args)
+        project = Path(source['project'])
+        key = source['projectKey']
         transfer = STATE / 'projects' / key
-        transfer.mkdir(parents=True, exist_ok=True)
-        temporary = transfer / 'source.pending.zip'
-        source = make_source_archive(project, temporary)
-        archive = transfer / (source['sourceHash'] + '.zip')
-        if archive.exists():
-            temporary.unlink()
-        else:
-            temporary.replace(archive)
-        framework = args.framework
-        if framework == 'auto':
-            if (project / 'src-tauri' / 'tauri.conf.json').is_file():
-                framework = 'tauri'
-            elif (project / 'wails.json').is_file():
-                framework = 'wails2'
-            else:
-                raise ValueError('Use --framework custom --command COMMAND --artifact RELATIVE.exe for this project.')
-        if framework == 'custom' and (not args.command or not args.artifact):
-            raise ValueError('Custom builds require --command and --artifact.')
-        recipe = {'framework': framework, 'command': args.command, 'artifact': args.artifact}
+        archive = Path(source['archive'])
+        recipe = {key: source[key] for key in ('framework', 'command', 'artifact')}
         build_id = digest(json.dumps({'source': source['sourceHash'], 'controller': self.control_hash, 'recipe': recipe}, sort_keys=True).encode())
-        request = dict(source, **recipe, projectKey=key, project=str(project), buildId=build_id, controllerHash=self.control_hash,
+        request = dict(source, buildId=build_id, controllerHash=self.control_hash,
                        archive='\\\\Mac\\' + self.config['share'] + '\\' + str(archive.relative_to(ROOT)).replace('/', '\\'))
         request_path = transfer / (build_id + '.json')
         request_path.write_text(json.dumps(request, indent=2) + '\n')

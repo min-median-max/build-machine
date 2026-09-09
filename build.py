@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Diagnose, provision and build native projects from this Mac."""
+import argparse
+import datetime
+import fcntl
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+from winbuild import ROOT, STATE, Machine, decode_output, project_key, snapshot_project
+
+
+class Runner:
+    def __init__(self, config, platform, log):
+        self.config = config
+        self.platform = platform
+        self.log = log
+        self.vm = config['platforms'][platform].get('vm')
+        self.share = Path('/media/psf') / config['share']
+
+    def call(self, args, capture=False):
+        args = [str(arg) for arg in args]
+        print('> ' + ' '.join(args), flush=True)
+        with self.log.open('ab') as log:
+            process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            chunks = []
+            for line in iter(process.stdout.readline, b''):
+                log.write(line)
+                log.flush()
+                chunks.append(line)
+                if not capture:
+                    print(decode_output(line).rstrip(), flush=True)
+            code = process.wait()
+        output = decode_output(b''.join(chunks))
+        if code:
+            raise RuntimeError('Command failed (%s). %s\nLog: %s' % (code, output[-2500:], self.log))
+        return output
+
+    def prepare(self):
+        if self.platform != 'linux':
+            return
+        info = json.loads(self.call(['prlctl','list','-i','--json',self.vm], capture=True))[0]
+        if info['State'] != 'running' or info.get('GuestTools', {}).get('state') != 'installed':
+            raise RuntimeError('Start the Linux VM, sign in to its desktop and install Parallels Tools.')
+        folders = info.get('Host Shared Folders', {})
+        existing = folders.get(self.config['share'])
+        if existing and Path(existing['path']).resolve() != ROOT:
+            raise RuntimeError('The named build-machine share already belongs to another directory.')
+        if not existing:
+            self.call(['prlctl','set',self.vm,'--shf-host-add',self.config['share'],'--path',ROOT,'--mode','ro'])
+        elif existing.get('mode') != 'ro' or not existing.get('enabled'):
+            self.call(['prlctl','set',self.vm,'--shf-host-set',self.config['share'],'--mode','ro','--enable'])
+        if not folders.get('enabled'):
+            self.call(['prlctl','set',self.vm,'--shf-host','on'])
+
+    def worker(self, action, request=None, run=False, root=False):
+        if self.platform == 'linux':
+            args = ['prlctl','exec',self.vm]
+            if not root:
+                args.append('--current-user')
+            args += ['/usr/bin/python3',self.share / 'native.py']
+        else:
+            args = [sys.executable, ROOT / 'native.py']
+        args += [action]
+        if request:
+            if self.platform == 'linux':
+                request = self.share / request.relative_to(ROOT)
+            args += ['--request',request]
+        if run:
+            args += ['--run']
+        return self.call(args)
+
+    def execute(self, args, snapshot):
+        self.prepare()
+        if args.action in ('setup','build','release') and self.platform == 'linux':
+            self.worker('setup-system', root=True)
+        request = None
+        if snapshot:
+            data = dict(snapshot)
+            if data.get('archive') and self.platform == 'linux':
+                data['archive'] = str(self.share / Path(data['archive']).relative_to(ROOT))
+            request = STATE / 'projects' / data['projectKey'] / (self.platform + '-request.json')
+            request.parent.mkdir(parents=True, exist_ok=True)
+            request.write_text(json.dumps(data, indent=2) + '\n')
+        self.worker(args.action, request=request, run=getattr(args, 'run', False))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest='action', required=True)
+    for action in ('doctor','setup','build','run','release'):
+        command = commands.add_parser(action)
+        command.add_argument('--os', choices=['windows','linux','macos','all'], default='all')
+        if action in ('build','run','release'):
+            command.add_argument('project', type=Path)
+        if action in ('build','release'):
+            command.add_argument('--framework', choices=['auto','tauri','wails2','custom'], default='auto')
+            command.add_argument('--command', help='Explicit command in the selected platform shell')
+            command.add_argument('--artifact', help='Executable path relative to the source snapshot')
+            command.add_argument('--run', action='store_true')
+    args = parser.parse_args()
+    if sys.platform != 'darwin':
+        parser.error('Run this controller on macOS; native.py and windows/*.ps1 are the native workers.')
+    platforms = ['windows','linux','macos'] if args.os == 'all' else [args.os]
+    STATE.mkdir(exist_ok=True)
+    try:
+        with (STATE / 'machine.lock').open('w') as lock:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError('Another build-machine command is running. Wait for its result.')
+            config = json.loads((ROOT / 'machine.json').read_text())
+            stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+            log = STATE / 'logs' / (stamp + '-matrix.log')
+            log.parent.mkdir(parents=True, exist_ok=True)
+            print('Host log:', log, flush=True)
+            snapshot = snapshot_project(args) if args.action in ('build','release') else None
+            if args.action == 'run':
+                snapshot = {'projectKey': project_key(args.project.expanduser().resolve())}
+            results = {}
+            for platform in platforms:
+                print('PLATFORM: ' + platform, flush=True)
+                try:
+                    if platform == 'windows':
+                        machine = Machine(config)
+                        machine.log_path = log
+                        machine.prepare()
+                        if args.action == 'doctor':
+                            machine.script('Doctor.ps1')
+                        elif args.action == 'run':
+                            machine.run(args.project)
+                        else:
+                            machine.setup()
+                            if args.action == 'build':
+                                machine.build(args, snapshot)
+                            elif args.action == 'release':
+                                raise RuntimeError('Windows installer rehearsal is not implemented yet. Use build --run for executable validation.')
+                    else:
+                        Runner(config, platform, log).execute(args, snapshot)
+                    results[platform] = {'success':True}
+                except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+                    results[platform] = {'success':False, 'error':str(error)}
+                    print('ERROR: ' + str(error), file=sys.stderr, flush=True)
+            report = {'action':args.action, 'source':snapshot, 'results':results, 'log':str(log)}
+            (STATE / (stamp + '-result.json')).write_text(json.dumps(report, indent=2) + '\n')
+            print(json.dumps(report, indent=2), flush=True)
+            return 0 if all(result['success'] for result in results.values()) else 1
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        print('ERROR:', error, file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
