@@ -1,0 +1,38 @@
+{
+  "vm": "Windows 11",
+  "share": "WindowsBuildMachine",
+  "windowsRoot": "C:\\BuildMachine",
+  "architecture": "arm64",
+  "node": {
+    "version": "24.21.0",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-arm64.zip",
+    "sha256": "8779b1bde1d39f8d420e3b57aa657b39891af434d3de44a919044cec06785921"
+  },
+  "pnpm": {"version": "11.24.0"},
+  "rust": {
+    "version": "1.98.1",
+    "host": "aarch64-pc-windows-msvc",
+    "installerUrl": "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-pc-windows-msvc/rustup-init.exe",
+    "installerSha256": "01aa49cf9574a8bd0ae52005d7de2590e8f27181ded6748236e702c92aef826d"
+  },
+  "go": {
+    "version": "1.27.1",
+    "url": "https://go.dev/dl/go1.27.1.windows-arm64.zip",
+    "sha256": "13b69b87bb0e83f96bc68560a8cace7f0343b1e03469f1110ea18d17e3234069"
+  },
+  "git": {
+    "version": "2.55.0.windows.5",
+    "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/Git-2.55.0.5-arm64.exe",
+    "sha256": "c955de342b1465bc637f0e71fddf4e28e8d0b829668ec1866ab32a839303e8e3"
+  },
+  "msvc": {
+    "installPath": "C:\\BuildTools",
+    "installerUrl": "https://aka.ms/vs/17/release/vs_BuildTools.exe",
+    "components": [
+      "Microsoft.VisualStudio.Workload.VCTools",
+      "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+      "Microsoft.VisualStudio.Component.Windows11SDK.26100"
+    ]
+  }
+}
