@@ -4,7 +4,7 @@ import { Icon } from './Icons';
 import { actionLabels, platformNames, type BuildRecord, type DashboardData, type Project, type RunningJob } from './types';
 
 const name = (path: string) => path.split('/').filter(Boolean).at(-1) || path;
-const labels = { success: '성공', failure: '실패', incomplete: '완료 결과 없음' };
+const labels = { success: '성공', passed_with_limits: '제한 포함', failure: '실패', incomplete: '완료 결과 없음' };
 function RecordedTime({ record }: { record: BuildRecord }) {
   const stamp = record.finishedAt || record.recordedAt;
   if (!stamp) return <span className="muted">시각 없음</span>;
@@ -15,7 +15,7 @@ function RecordedTime({ record }: { record: BuildRecord }) {
 function Outcome({ record, running = false }: { record: BuildRecord | null; running?: boolean }) {
   if (running) return <span className="build-outcome running"><span className="spinner"/>빌드 중</span>;
   if (!record) return <span className="build-outcome unknown">기록 없음</span>;
-  return <span className={`build-outcome ${record.status}`} title={record.error || Object.values(record.results || {}).map(result => result?.error).filter(Boolean).join('\n')}><Icon name={record.status === 'success' ? 'check' : record.status === 'failure' ? 'alert' : 'clock'} size={13}/>{labels[record.status]}</span>;
+  return <span className={`build-outcome ${record.status}`} title={record.error || Object.values(record.results || {}).map(result => result?.error).filter(Boolean).join('\n')}><Icon name={record.status === 'success' || record.status === 'passed_with_limits' ? 'check' : record.status === 'failure' ? 'alert' : 'clock'} size={13}/>{labels[record.status]}</span>;
 }
 
 export function Dashboard({ controllerPath, projects, job, showError, onSelect, onAdd, onViewJob, onOpenLog }: {
@@ -44,6 +44,7 @@ export function Dashboard({ controllerPath, projects, job, showError, onSelect, 
   }, [controllerPath, paths, running]);
   const building = (path: string) => job?.action === 'build' && job.projectPath === path;
   const count = (status: string) => data?.projects.filter(row => !building(row.path) && row.latest?.status === status).length || 0;
+  const passed = (data?.projects.filter(row => !building(row.path) && (row.latest?.status === 'success' || row.latest?.status === 'passed_with_limits')).length || 0);
   const unavailable = data?.projects.filter(row => !row.latest || row.latest.status === 'incomplete' || building(row.path)).length || 0;
   const pending = !data || loading;
 
@@ -54,7 +55,7 @@ export function Dashboard({ controllerPath, projects, job, showError, onSelect, 
     {data?.warning && <div className="dashboard-warning" role="alert"><Icon name="alert" size={16}/>{data.warning}</div>}
     <section className="dashboard-counts" aria-label="빌드 요약">
       <div><span>등록 프로젝트</span><strong>{projects.length}<small>개</small></strong><Icon name="folder" size={19}/></div>
-      <div className="count-success"><span>최근 빌드 성공</span><strong>{pending ? '—' : count('success')}<small>개</small></strong><Icon name="check" size={19}/></div>
+      <div className="count-success"><span>최근 빌드 성공</span><strong>{pending ? '—' : passed}<small>개</small></strong><Icon name="check" size={19}/></div>
       <div className="count-failure"><span>최근 빌드 실패</span><strong>{pending ? '—' : count('failure')}<small>개</small></strong><Icon name="alert" size={19}/></div>
       <div><span>완료 결과 없음</span><strong>{pending ? '—' : unavailable}<small>개</small></strong><Icon name="clock" size={19}/></div>
     </section>
@@ -73,8 +74,8 @@ export function Dashboard({ controllerPath, projects, job, showError, onSelect, 
     </section>
     <section className="dashboard-history" aria-label="최근 빌드 기록"><div className="section-title"><h2>최근 빌드 기록</h2><span>최대 6개</span></div>
       {!data?.history.length ? <p className="history-empty">{loading ? '빌드 기록을 확인하고 있어요…' : error ? '빌드 기록을 불러오지 못했어요.' : '아직 기록된 빌드가 없어요.'}</p> : data.history.map(record => <div className="history-row" key={record.id}>
-        <span className={`history-mark ${record.status}`}><Icon name={record.status === 'success' ? 'check' : record.status === 'failure' ? 'alert' : 'clock'} size={15}/></span>
-        <div className="history-description"><strong>{name(record.project)}<Outcome record={record}/></strong><div className="history-platforms">{record.platforms.map(os => <span key={os}>{platformNames[os] || os} · {record.results?.[os]?.success === true ? '성공' : record.results?.[os]?.success === false ? '실패' : '결과 없음'}</span>)}</div>{record.error && <p className="history-error">{record.error}</p>}</div>
+        <span className={`history-mark ${record.status}`}><Icon name={record.status === 'success' || record.status === 'passed_with_limits' ? 'check' : record.status === 'failure' ? 'alert' : 'clock'} size={15}/></span>
+        <div className="history-description"><strong>{name(record.project)}<Outcome record={record}/></strong><div className="history-platforms">{record.platforms.map(os => <span key={os}>{platformNames[os] || os} · {record.results?.[os]?.success === true ? (record.results?.[os]?.status === 'passed_with_limits' ? '제한 포함' : '성공') : record.results?.[os]?.success === false ? '실패' : '결과 없음'}</span>)}{record.executionMode && <span>{record.executionMode === 'parallel' ? '병렬' : '순차'} 실행</span>}{record.source?.revision && <span>ref {String(record.source.revision).slice(0, 12)}{record.source.dirty ? ' · 변경 있음' : ''}</span>}</div>{record.error && <p className="history-error">{record.error}</p>}</div>
         <RecordedTime record={record}/><button className="text-button" disabled={!record.log} aria-label={`${name(record.project)} ${record.id} 로그 열기`} onClick={() => record.log && onOpenLog(record.log)}><Icon name="terminal" size={14}/>로그<Icon name="arrow" size={12}/></button>
       </div>)}
     </section>

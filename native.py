@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Native macOS/Linux worker. This same entry point can run in GitHub Actions."""
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -104,6 +105,220 @@ def launch(receipt, tools):
     report = {'executable': str(executable), 'processId': process_id, 'reusedProcess': bool(existing),
               'verification': 'process running; visual rendering requires the recorded platform screen check'}
     print(json.dumps(report, indent=2), flush=True)
+    return report
+
+
+def _step_env(base, values):
+    env = base.copy()
+    limits = []
+    for key, value in (values or {}).items():
+        value = str(value)
+        if "secrets." in value or "github.token" in value or "GITHUB_TOKEN" in key:
+            limits.append('GitHub secret values were replaced by an empty local adapter value.')
+            env[key] = ''
+        elif "${{" in value:
+            env[key] = ''
+            limits.append(f'Expression for {key} is not available in the local runner.')
+        else:
+            env[key] = value
+    return env, limits
+
+
+def _run_workflow_command(step, source, env, timeout=1800):
+    command_text = str(step.get('run') or '').strip()
+    if not command_text:
+        raise RuntimeError(f"Workflow step {step.get('index')} has an empty run command.")
+    working = source / str(step.get('working-directory') or '.')
+    working = working.resolve()
+    working.relative_to(source.resolve())
+    result = subprocess.run(['/bin/sh', '-eu', '-c', command_text], cwd=working, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+    if result.stdout:
+        print(result.stdout, end='', flush=True)
+    if result.stderr:
+        print(result.stderr, end='', file=sys.stderr, flush=True)
+    return result
+
+
+def _condition_enabled(step):
+    condition = str(step.get('if') or '').strip()
+    if not condition:
+        return True, []
+    if 'secrets.' in condition or 'SIGNING_CONFIGURED' in condition or 'github.token' in condition:
+        return False, ['A GitHub secret or token condition is false in the local runner.']
+    if condition in ('false', "'false'", '0'):
+        return False, []
+    if condition in ('true', "'true'", '1', 'always()'):
+        return True, []
+    # The local runner only accepts conditions whose event/ref was already
+    # resolved by the controller. Unknown expressions fail closed.
+    raise RuntimeError(f"Unsupported workflow condition: {condition}")
+
+
+def _workflow_tauri_action(step, source, request, tools, env):
+    args = str((step.get('with') or {}).get('args') or '')
+    target = request.get('target') or tools.profile['target']
+    bundle = request.get('bundle') or tools.profile['bundle']
+    if (source / 'pnpm-lock.yaml').is_file():
+        install = _run_workflow_command({'run': 'pnpm install --frozen-lockfile', 'working-directory': step.get('working-directory')}, source, env)
+        if install.returncode:
+            raise RuntimeError(f"pnpm install failed with exit code {install.returncode}.")
+        base = ['pnpm', 'exec', 'tauri', 'build']
+    elif (source / 'package-lock.json').is_file():
+        install = _run_workflow_command({'run': 'npm ci', 'working-directory': step.get('working-directory')}, source, env)
+        if install.returncode:
+            raise RuntimeError(f"npm ci failed with exit code {install.returncode}.")
+        base = ['npm', 'exec', '--', 'tauri', 'build']
+    else:
+        raise RuntimeError('The Tauri action requires a pnpm or npm lockfile.')
+    command_args = base + ['--ci', '--no-sign', '--target', target, '--bundles', bundle, '--', '--locked']
+    if args:
+        command_args.extend(args.split())
+    print('> ' + ' '.join(command_args), flush=True)
+    result = subprocess.run(command_args, cwd=source, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=3600)
+    if result.stdout:
+        print(result.stdout, end='', flush=True)
+    if result.stderr:
+        print(result.stderr, end='', file=sys.stderr, flush=True)
+    if result.returncode:
+        raise RuntimeError(f"Tauri action failed with exit code {result.returncode}.")
+    output = source / 'src-tauri' / 'target' / target / 'release'
+    if tools.os == 'macos':
+        applications = list((output / 'bundle' / 'macos').glob('*.app'))
+        if len(applications) != 1:
+            raise RuntimeError('Expected exactly one macOS app bundle from the Tauri action.')
+        application = applications[0]
+        info = plistlib.loads((application / 'Contents/Info.plist').read_bytes())
+        executable = application / 'Contents/MacOS' / info['CFBundleExecutable']
+        artifacts = list((output / 'bundle').glob('**/*.dmg'))
+    else:
+        application = None
+        artifact = request.get('artifact')
+        if artifact:
+            executable = (source / artifact).resolve()
+            executable.relative_to(source.resolve())
+        else:
+            candidates = [path for path in output.iterdir() if path.is_file() and os.access(path, os.X_OK) and not path.name.endswith(('.so', '.d', '.rlib', '.a'))]
+            if len(candidates) != 1:
+                raise RuntimeError('Specify --artifact when the workflow produces multiple executable candidates.')
+            executable = candidates[0]
+        artifacts = list((output / 'bundle').glob('**/*.deb'))
+    if not executable.is_file():
+        raise RuntimeError('The workflow did not produce the expected executable.')
+    return executable, application, artifacts
+
+
+def ci_run(request, tools):
+    """Execute the supported workflow steps in the provided native workspace."""
+    tools.setup_system()
+    tools.setup_user()
+    root = project_root(request)
+    signature = hashlib.sha256((ROOT / 'native.py').read_bytes() + json.dumps(request.get('workflow'), sort_keys=True).encode() + request['sourceHash'].encode()).hexdigest()
+    directory = root / ('ci-' + signature[:24])
+    source = directory / 'source'
+    archive = Path(request['archive'])
+    if sha(archive) != request['sourceHash']:
+        raise RuntimeError('Source snapshot checksum mismatch.')
+    directory.mkdir(parents=True, exist_ok=True)
+    if not (directory / 'source-ready').exists():
+        if source.exists():
+            raise RuntimeError('Incomplete source extraction at ' + str(source))
+        with zipfile.ZipFile(archive) as zipped:
+            for member in zipped.namelist():
+                (source / member).resolve().relative_to(source.resolve())
+            zipped.extractall(source)
+            for member in zipped.infolist():
+                if not member.is_dir():
+                    mode = (member.external_attr >> 16) & 0o777
+                    if mode:
+                        (source / member.filename).chmod(mode)
+        (directory / 'source-ready').write_text(request['sourceHash'])
+    base_env = tools.env.copy()
+    for key in tuple(base_env):
+        if key.startswith('APPLE_') or key in ('TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'GITHUB_TOKEN'):
+            del base_env[key]
+    report = {'platform': tools.os, 'target': tools.profile['target'], 'success': False, 'status': 'failed',
+              'sourceHash': request['sourceHash'], 'revision': request.get('revision'), 'dirty': request.get('dirty', False),
+              'stages': {}, 'artifacts': [], 'limits': ['Local CI never signs, notarizes or uploads to GitHub.'], 'commands': [],
+              'signing': 'unverified', 'publication': {'mode': 'local', 'uploaded': False}, 'attempts': 1}
+    executable = None
+    application = None
+    try:
+        doctor = tools.doctor()
+        report['stages']['doctor'] = {'status': 'passed' if doctor['ready'] else 'failed', 'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'finishedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'tools': doctor.get('tools', {}), 'missing': doctor.get('missing', [])}
+        if not doctor['ready']:
+            raise RuntimeError('Native tool diagnosis failed: ' + ', '.join(doctor.get('missing', [])))
+        for stage in ('setup', 'test', 'build', 'smoke', 'release'):
+            stage_steps = (request.get('stages') or {}).get(stage, [])
+            if not stage_steps:
+                continue
+            started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            stage_result = {'status': 'passed', 'startedAt': started, 'steps': []}
+            for step in stage_steps:
+                step_started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                adapter = step.get('adapter')
+                result = {'index': step.get('index'), 'name': step.get('name'), 'adapter': adapter, 'startedAt': step_started}
+                enabled, condition_limits = _condition_enabled(step)
+                report['limits'].extend(condition_limits)
+                if not enabled:
+                    result.update(status='passed_with_limits', skipped=True, reason='if condition evaluated false locally')
+                    stage_result['status'] = 'passed_with_limits'
+                elif adapter == 'skip':
+                    result.update(status='passed_with_limits', reason=step.get('reason'))
+                    stage_result['status'] = 'passed_with_limits'
+                    report['limits'].append(f"{stage} skipped: {step.get('reason')}")
+                elif adapter in ('checkout', 'pnpm-setup', 'node-setup', 'rust-setup', 'cache'):
+                    result.update(status='passed', localAdapter=True)
+                elif adapter in ('artifact-upload', 'release'):
+                    result.update(status='passed_with_limits', localAdapter=True)
+                    stage_result['status'] = 'passed_with_limits'
+                    report['limits'].append(f"{step.get('name')}: external GitHub service replaced by local artifact store")
+                elif adapter == 'tauri-build':
+                    executable, application, artifacts = _workflow_tauri_action(step, source, request, tools, base_env)
+                    result.update(status='passed', executable=str(executable), artifacts=[str(path) for path in artifacts])
+                    for path in artifacts:
+                        report['artifacts'].append({'path': str(path), 'sha256': sha(path), 'size': path.stat().st_size})
+                elif adapter == 'run':
+                    env, limits = _step_env(base_env, {**(request.get('jobEnv') or {}), **(step.get('env') or {})})
+                    report['limits'].extend(limits)
+                    result['command'] = str(step.get('run') or '')
+                    report['commands'].append({'stage': stage, 'command': result['command'], 'workingDirectory': step.get('working-directory') or '.'})
+                    try:
+                        completed = _run_workflow_command(step, source, env, timeout={'test': 1800, 'build': 3600, 'smoke': 600}.get(stage, 900))
+                        result.update(status='passed' if completed.returncode == 0 else 'failed', exitCode=completed.returncode,
+                                      stdout=completed.stdout, stderr=completed.stderr)
+                        if completed.returncode:
+                            stage_result['status'] = 'failed'
+                            stage_result['error'] = f"step {step.get('index')} exited with {completed.returncode}"
+                    except subprocess.TimeoutExpired as error:
+                        stdout = error.stdout.decode(errors='replace') if isinstance(error.stdout, bytes) else (error.stdout or '')
+                        stderr = error.stderr.decode(errors='replace') if isinstance(error.stderr, bytes) else (error.stderr or '')
+                        result.update(status='timeout', timeoutSeconds={'test': 1800, 'build': 3600, 'smoke': 600}.get(stage, 900), stdout=stdout, stderr=stderr)
+                        stage_result['status'] = 'failed'
+                        stage_result['error'] = f"step {step.get('index')} timed out"
+                else:
+                    raise RuntimeError(f"Unsupported workflow adapter: {adapter}")
+                result['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                stage_result['steps'].append(result)
+                if stage_result['status'] == 'failed':
+                    break
+            stage_result['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            report['stages'][stage] = stage_result
+            if stage_result['status'] == 'failed':
+                raise RuntimeError(stage_result.get('error', f'{stage} stage failed'))
+        if executable:
+            report['executable'] = str(executable)
+            report['executableSHA256'] = sha(executable)
+            report['app'] = str(application) if application else None
+        report['success'] = True
+        report['status'] = 'passed_with_limits' if report['limits'] else 'passed'
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        report['error'] = str(error)
+        report['status'] = 'failed'
+    report['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    print('CI_REPORT_BEGIN', flush=True)
+    print(json.dumps(report, indent=2), flush=True)
+    print('CI_REPORT_END', flush=True)
     return report
 
 
@@ -245,7 +460,7 @@ def build(request, tools, release=False, run=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['doctor','setup-system','setup','build','release','run'])
+    parser.add_argument('action', choices=['doctor','setup-system','setup','build','release','run','ci'])
     parser.add_argument('--config', type=Path, default=ROOT / 'machine.json')
     parser.add_argument('--request', type=Path)
     parser.add_argument('--run', action='store_true')
@@ -269,6 +484,9 @@ def main():
         if args.action == 'run':
             receipt = json.loads((project_root(request) / 'latest.json').read_text())
             write_json(project_root(request) / 'running.json', launch(receipt, tools))
+        elif args.action == 'ci':
+            report = ci_run(request, tools)
+            return 0 if report['success'] else 1
         else:
             tools.setup_system()
             tools.setup_user()

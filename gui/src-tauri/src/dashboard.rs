@@ -31,13 +31,15 @@ pub fn read(root: &Path, projects: &[String]) -> Result<Value, String> {
                 ["windows", "linux", "macos"].contains(&os.as_str()) && report["results"][os]["success"] == true
             });
             let status = if report["status"] == "running" { "incomplete" }
-                else if failed { "failure" } else if complete { "success" } else { "incomplete" };
+                else if failed { "failure" } else if report["status"] == "passed_with_limits" { "passed_with_limits" }
+                else if complete { "success" } else { "incomplete" };
             let recorded_at = entry.metadata().and_then(|m| m.modified()).ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map(|time| time.as_millis() as u64);
             if recorded_at.is_none() { unreadable += 1; }
             history.push(json!({"id":entry.file_name().to_string_lossy(),"project":project,"status":status,
                 "platforms":platforms,"results":report["results"],"recordedAt":recorded_at,
-                "finishedAt":report["finishedAt"],"log":report["log"],"error":report["error"]}));
+                "finishedAt":report["finishedAt"],"log":report["log"],"error":report["error"],
+                "executionMode":report["executionMode"],"source":report["source"]}));
         }
     }
     history.sort_by(|a, b| b["recordedAt"].as_u64().cmp(&a["recordedAt"].as_u64())

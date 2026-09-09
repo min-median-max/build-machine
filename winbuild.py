@@ -44,12 +44,37 @@ def project_key(project):
     return name[:60] + '-' + digest(os.fsencode(str(project)))[:10]
 
 
-def make_source_archive(project, destination):
-    """Archive current files, honoring Git ignore rules and deterministic ordering."""
-    revision = git(project, 'rev-parse', 'HEAD').decode().strip()
-    files = sorted(set(git(project, 'ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')) - {b''})
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+def git_root(project):
+    """Return the repository root and reject subdirectories as projects."""
+    project = Path(project).expanduser().resolve()
+    try:
+        root = Path(git(project, 'rev-parse', '--show-toplevel').decode().strip()).resolve()
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError('프로젝트 루트가 Git 저장소가 아니에요.')
+    if project != root:
+        raise ValueError('프로젝트는 Git 저장소 루트만 등록할 수 있어요. 모노레포 하위 앱은 workflow의 working-directory를 사용하세요.')
+    return root
+
+
+def make_source_archive(project, destination, ref=None):
+    """Archive a local working tree or an immutable Git ref."""
+    project = git_root(project)
+    revision = git(project, 'rev-parse', ref or 'HEAD').decode().strip()
+    if ref:
+        entries = []
+        raw_entries = git(project, 'ls-tree', '-r', '-z', revision).split(b'\0')
+        for raw in raw_entries:
+            if not raw:
+                continue
+            metadata, name = raw.split(b'\t', 1)
+            mode, kind, _ = metadata.decode().split(' ', 2)
+            if kind != 'blob' or mode.startswith('120'):
+                raise ValueError('고정 ref에 지원하지 않는 Git 항목이 있어요: ' + os.fsdecode(name))
+            entries.append((os.fsdecode(name), mode, git(project, 'show', f'{revision}:{os.fsdecode(name)}')))
+        dirty = False
+    else:
+        files = sorted(set(git(project, 'ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')) - {b''})
+        entries = []
         for raw_name in files:
             name = os.fsdecode(raw_name)
             path = project / name
@@ -61,11 +86,16 @@ def make_source_archive(project, destination):
                 raise ValueError('Source points outside the project: ' + name)
             if not path.is_file():
                 raise ValueError('Source is not a regular file (including unsupported submodules): ' + name)
+            entries.append((name, format(path.stat().st_mode & 0o777, 'o'), path.read_bytes()))
+        dirty = bool(git(project, 'status', '--porcelain'))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, mode, data in sorted(entries, key=lambda value: value[0]):
             entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
-            entry.external_attr = (path.stat().st_mode & 0xFFFF) << 16
-            archive.writestr(entry, path.read_bytes())
-    return {'revision': revision, 'dirty': bool(git(project, 'status', '--porcelain')), 'sourceHash': digest(destination.read_bytes()), 'fileCount': len(files)}
+            entry.external_attr = (int(mode, 8) & 0xFFFF) << 16
+            archive.writestr(entry, data)
+    return {'revision': revision, 'dirty': dirty, 'sourceHash': digest(destination.read_bytes()), 'fileCount': len(entries), 'sourceMode': 'ref' if ref else 'local'}
 
 
 def controller_files():
@@ -78,11 +108,12 @@ def controller_hash():
 
 def snapshot_project(args):
     project = args.project.expanduser().resolve()
+    git_root(project)
     key = project_key(project)
     transfer = STATE / 'projects' / key
     transfer.mkdir(parents=True, exist_ok=True)
     temporary = transfer / 'source.pending.zip'
-    source = make_source_archive(project, temporary)
+    source = make_source_archive(project, temporary, getattr(args, 'ref', None))
     archive = transfer / (source['sourceHash'] + '.zip')
     if archive.exists():
         temporary.unlink()
@@ -213,6 +244,26 @@ class Machine:
         (transfer / 'latest.json').write_text(json.dumps(request, indent=2) + '\n')
         if args.run:
             self.run(project)
+
+    def ci(self, args, snapshot, config):
+        data = dict(snapshot)
+        data['archive'] = '\\\\Mac\\' + self.config['share'] + '\\' + str(Path(data['archive']).relative_to(ROOT)).replace('/', '\\')
+        data['target'] = config['platforms']['windows']['target']
+        data['bundle'] = config['platforms']['windows'].get('bundle')
+        data['ci'] = True
+        transfer = STATE / 'projects' / data['projectKey']
+        transfer.mkdir(parents=True, exist_ok=True)
+        request_path = transfer / 'windows-ci-request.json'
+        result_path = transfer / 'windows-ci-result.json'
+        if result_path.exists():
+            result_path.unlink()
+        data['resultPath'] = '\\\\Mac\\' + self.config['share'] + '\\' + str(result_path.relative_to(ROOT)).replace('/', '\\')
+        request_path.write_text(json.dumps(data, indent=2) + '\n')
+        remote_request = '\\\\Mac\\' + self.config['share'] + '\\' + str(request_path.relative_to(ROOT)).replace('/', '\\')
+        self.script('Build.ps1', '-RequestPath ' + ps_quote(remote_request) + ' -CI')
+        if not result_path.exists():
+            raise RuntimeError('Windows workflow did not write a structured result.')
+        return json.loads(result_path.read_text())
 
     def run(self, project):
         key = project_key(project.expanduser().resolve())

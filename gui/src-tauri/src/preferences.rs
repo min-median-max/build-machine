@@ -6,12 +6,28 @@ use std::{fs, path::Path, process::Command};
 pub enum Page { Dashboard, Environment, Projects }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode { Sequential, Parallel }
+
+impl Default for ExecutionMode { fn default() -> Self { Self::Sequential } }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
     pub path: String,
     pub platforms: Vec<String>,
     pub launch: bool,
+    #[serde(default)]
+    pub workflow: Option<String>,
+    #[serde(default = "default_event")]
+    pub event: String,
+    #[serde(default)]
+    pub ref_name: Option<String>,
+    #[serde(default)]
+    pub execution: ExecutionMode,
 }
+
+fn default_event() -> String { "workflow_dispatch".into() }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,7 +71,7 @@ pub fn load(path: &Path, controller_path: String) -> Result<Preferences, String>
         preferences.controller_path = previous.controller_path;
         preferences.environment_platforms = previous.platforms.clone();
         if let Some(project) = previous.project_path {
-            preferences.projects.push(Project { path: project.clone(), platforms: previous.platforms, launch: false });
+            preferences.projects.push(Project { path: project.clone(), platforms: previous.platforms, launch: false, workflow: None, event: default_event(), ref_name: None, execution: ExecutionMode::default() });
             preferences.selected_project = Some(project);
         }
     }
@@ -65,13 +81,13 @@ pub fn load(path: &Path, controller_path: String) -> Result<Preferences, String>
 
 pub fn register(preferences: &mut Preferences, project_path: &str) -> Result<(), String> {
     let path = Path::new(project_path).canonicalize().map_err(|_| "프로젝트 폴더를 찾을 수 없어요.".to_string())?;
-    let response = Command::new("/usr/bin/git").args(["-C"]).arg(&path).args(["rev-parse", "--is-inside-work-tree"]).output().map_err(|e| e.to_string())?;
-    if !response.status.success() || String::from_utf8_lossy(&response.stdout).trim() != "true" {
+    let response = Command::new("/usr/bin/git").args(["-C"]).arg(&path).args(["rev-parse", "--show-toplevel"]).output().map_err(|e| e.to_string())?;
+    if !response.status.success() || Path::new(String::from_utf8_lossy(&response.stdout).trim()).canonicalize().ok().as_ref() != Some(&path) {
         return Err("Git 프로젝트 폴더를 선택해주세요.".into());
     }
     let path = path.to_string_lossy().into_owned();
     if !preferences.projects.iter().any(|project| project.path == path) {
-        preferences.projects.push(Project { path: path.clone(), platforms: all_platforms(), launch: false });
+        preferences.projects.push(Project { path: path.clone(), platforms: all_platforms(), launch: false, workflow: None, event: default_event(), ref_name: None, execution: ExecutionMode::default() });
     }
     preferences.selected_project = Some(path);
     preferences.page = Page::Projects;

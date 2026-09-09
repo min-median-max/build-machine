@@ -30,7 +30,7 @@ class NativeBuildTests(unittest.TestCase):
                         'archive':str(self.archive),'framework':'custom',
                         'command':'/bin/sh build.sh','artifact':'app'}
         self.tools = SimpleNamespace(config={}, os='linux', profile={'target':'aarch64-unknown-linux-gnu'},
-                                     env=os.environ.copy(), doctor=lambda: {'tools':{}})
+                                     env=os.environ.copy(), doctor=lambda: {'ready': True, 'tools':{}, 'missing': []})
         self.workspace = patch.object(native, 'local_workspace', return_value=self.root / 'workspace')
         self.workspace.start()
         self.addCleanup(self.workspace.stop)
@@ -68,6 +68,26 @@ class NativeBuildTests(unittest.TestCase):
         self.request['command'] = './build.sh'
         receipt = self.build()
         self.assertTrue(Path(receipt['executable']).is_file())
+
+    def test_ci_runner_executes_run_steps_and_records_explicit_limits(self):
+        self.request.update({
+            'workflow': {'name': 'fixture', 'event': 'workflow_dispatch', 'jobs': []},
+            'stages': {
+                'setup': [{'index': 1, 'name': 'checkout', 'adapter': 'checkout'}],
+                'test': [{'index': 2, 'name': 'skip test', 'adapter': 'skip', 'reason': 'fixture'}],
+                'build': [{'index': 3, 'name': 'build', 'adapter': 'run', 'run': 'printf ci-ok > ci.txt'}],
+                'smoke': [{'index': 4, 'name': 'skip smoke', 'adapter': 'skip', 'reason': 'fixture'}],
+            },
+            'revision': 'fixture', 'dirty': True, 'target': 'aarch64-unknown-linux-gnu',
+        })
+        self.tools.setup_system = lambda: None
+        self.tools.setup_user = lambda: None
+        with contextlib.redirect_stdout(io.StringIO()):
+            report = native.ci_run(self.request, self.tools)
+        self.assertTrue(report['success'])
+        self.assertEqual(report['status'], 'passed_with_limits')
+        self.assertIn('build', report['stages'])
+        self.assertTrue(any('test skipped' in value for value in report['limits']))
 
 
 class ProcessLookupTests(unittest.TestCase):

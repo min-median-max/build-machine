@@ -60,6 +60,38 @@ class BuildReportTests(unittest.TestCase):
             self.assertTrue(report['results']['linux']['success'])
             self.assertFalse(report['results']['macos']['success'])
 
+    def test_parallel_execution_keeps_one_snapshot_and_uniform_platform_results(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / 'project'
+            project.mkdir()
+            subprocess = __import__('subprocess')
+            subprocess.run(['git', 'init', '-q', str(project)], check=True)
+            subprocess.run(['git', '-C', str(project), 'config', 'user.email', 'test@example.invalid'], check=True)
+            subprocess.run(['git', '-C', str(project), 'config', 'user.name', 'test'], check=True)
+            (project / '.github/workflows').mkdir(parents=True)
+            (project / '.github/workflows/build.yml').write_text('''# build-machine: skip test reason=fixture\n# build-machine: skip smoke reason=fixture\nname: build\non: workflow_dispatch\njobs:\n  build:\n    runs-on: macos-14\n    steps:\n      - run: echo build\n''')
+            subprocess.run(['git', '-C', str(project), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(project), 'commit', '-qm', 'initial'], check=True)
+            machine = root / 'machine.json'
+            machine.write_text(json.dumps({'platforms': {'linux': {}, 'macos': {}}, 'share': 'test'}))
+            result_file = root / 'result.json'
+            argv = ['build.py', 'ci', 'run', str(project), '--os', 'linux', 'macos', '--workflow', '.github/workflows/build.yml', '--execution', 'parallel', '--result-file', str(result_file)]
+            calls = []
+            def execute_ci(runner, args, snapshot, config):
+                calls.append((runner.platform, snapshot['sourceHash'], args.execution))
+                return {'success': True, 'status': 'passed_with_limits', 'platform': runner.platform, 'stages': {}, 'limits': ['fixture']}
+            with patch.object(build, 'ROOT', root), patch.object(build, 'STATE', root / '.state'), \
+                 patch.object(build.sys, 'platform', 'darwin'), patch.object(sys, 'argv', argv), \
+                 patch.object(build.Runner, 'execute_ci', execute_ci), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(build.main(), 0)
+            report = json.loads(result_file.read_text())
+            self.assertEqual(report['executionMode'], 'parallel')
+            self.assertEqual(report['status'], 'passed_with_limits')
+            self.assertEqual(set(report['results']), {'linux', 'macos'})
+            self.assertEqual({source for _, source, _ in calls}, {report['source']['sourceHash']})
+            self.assertEqual({mode for _, _, mode in calls}, {'parallel'})
+
 
 if __name__ == '__main__':
     unittest.main()

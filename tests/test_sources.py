@@ -70,6 +70,12 @@ class SourceArchiveTests(unittest.TestCase):
     def test_projects_with_same_name_have_separate_destinations(self):
         self.assertNotEqual(winbuild.project_key(Path('/first/app')), winbuild.project_key(Path('/second/app')))
 
+    def test_repository_subdirectory_is_not_a_project_root(self):
+        nested = self.project / 'src'
+        nested.mkdir()
+        with self.assertRaisesRegex(ValueError, '루트'):
+            winbuild.git_root(nested)
+
 
 if __name__ == '__main__':
     unittest.main()
