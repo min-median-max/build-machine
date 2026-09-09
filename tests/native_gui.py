@@ -9,9 +9,24 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / 'gui/src-tauri/target/release/bundle/macos/Build Machine.app'
 
+FIND_BUTTON = '''
+on findButton(anElement, labelText)
+  tell application "System Events"
+    if role of anElement is "AXButton" then
+      if name of anElement is labelText or description of anElement is labelText then return anElement
+    end if
+    repeat with childItem in UI elements of anElement
+      set found to my findButton(contents of childItem, labelText)
+      if found is not missing value then return found
+    end repeat
+  end tell
+  return missing value
+end findButton
+'''
 
-def applescript(script):
-    return subprocess.check_output(['osascript', '-'], input=script, text=True).strip()
+
+def applescript(script, *args):
+    return subprocess.check_output(['osascript', '-', *map(str, args)], input=script, text=True).strip()
 
 
 def main():
@@ -28,11 +43,16 @@ def main():
     environment_names = {'windows': 'Windows 선택', 'linux': 'Ubuntu 선택', 'macos': 'macOS 선택'}
     select_commands = '\n'.join('if value of checkbox "%s" of workspace is %s then click checkbox "%s" of workspace' %
                                 (name, 0 if os_name in args.os else 1, name) for os_name, name in environment_names.items())
-    applescript('''
+    applescript(FIND_BUTTON + '''
 tell application "System Events"
   tell first application process whose bundle identifier is "local.buildmachine.desktop"
     set frontmost to true
     set contentArea to UI element 1 of scroll area 1 of group 1 of group 1 of front window
+    set navigationButton to my findButton(group 1 of contentArea, "설정")
+    if navigationButton is missing value then error "Settings button is missing."
+    if not (enabled of navigationButton) then error "Build Machine is busy."
+    click navigationButton
+    delay 0.3
     set workspace to group 2 of contentArea
     if not (enabled of button "환경 진단" of workspace) then error "An operation is running or the controller is unavailable."
     %s

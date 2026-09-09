@@ -8,14 +8,6 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Preferences {
-    pub controller_path: String,
-    pub project_path: Option<String>,
-    pub platforms: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Action { Doctor, Setup, Build, Run }
 
@@ -72,30 +64,6 @@ fn process(command: &str) -> Command {
     child
 }
 
-pub fn recent_projects(root: &Path) -> Vec<String> {
-    let mut projects = Vec::new();
-    if let Ok(entries) = fs::read_dir(root.join(".state/projects")) {
-        for entry in entries.flatten() {
-            let receipt = entry.path().join("latest.json");
-            if let Ok(data) = fs::read(&receipt) {
-                if let Ok(value) = serde_json::from_slice::<Value>(&data) {
-                    if let Some(project) = value.get("project").and_then(Value::as_str) {
-                        if Path::new(project).is_dir() {
-                            let modified = fs::metadata(&receipt).and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH);
-                            projects.push((modified, project.to_owned()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    projects.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut paths = Vec::new();
-    for (_, path) in projects { if !paths.contains(&path) { paths.push(path); } }
-    paths.truncate(8);
-    paths
-}
-
 pub fn overview(value: &str) -> Result<Value, String> {
     let root = controller_root(value)?;
     let config: Value = serde_json::from_slice(&fs::read(root.join("machine.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
@@ -118,7 +86,7 @@ pub fn overview(value: &str) -> Result<Value, String> {
         };
         environments.push(json!({"id":id,"title":title,"target":target,"vm":vm_name,"status":status}));
     }
-    Ok(json!({"controllerPath":root,"environments":environments,"recentProjects":recent_projects(&root),"toolStatus":tool_status(&root, &config),"warning":warning}))
+    Ok(json!({"controllerPath":root,"environments":environments,"toolStatus":tool_status(&root, &config),"warning":warning}))
 }
 
 pub fn tool_status(root: &Path, config: &Value) -> Value {

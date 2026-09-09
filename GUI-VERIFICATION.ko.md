@@ -15,6 +15,17 @@
 
 네이티브 동작과 창 캡처는 `tests/native_gui.py`, `tests/gui_window.js`로 유지보수합니다. AIRDATA 소스, 저장 데이터와 실행 중인 게스트 앱은 보존했습니다. 준비 검사 중 GUI를 통한 앱 빌드/실행과 패키지 설치는 반복하지 않았습니다. 기존 AIRDATA 검증 범위는 [verification.md](verification.md)에 있습니다.
 
+## 등록 프로젝트와 공통 설정
+
+2026-09-09에 `7c78a15` 기반 작업 트리에서 검증했습니다. 검사한 `gui/` Git 트리는 `bfa44cc35dcb4db7f2d0593a24c75e9882555d3f`입니다. 배포한 실행 파일 SHA-256은 `202e71b2ed40139f7e3458e5581eda2dc9c5d33cfa56b4a512bce0d883f9c3d9`이며 위와 같은 서명하지 않은 ARM64 `0.0.1` 번들 경로에 있습니다.
+
+- `python3 desktop.py test`: Rust 테스트 8개와 브라우저 테스트 9개를 통과했습니다. 실제 Ubuntu 연결 테스트는 별도 명시 실행 대상입니다. 설정 테스트는 최초 선택 프로젝트 보존, 실제 Git 폴더 검증, 실제 경로의 중복 등록, 원자적 저장, 환경/프로젝트별 독립 옵션을 검사합니다. 브라우저는 명시적 등록, 프로젝트 선택, 등록 해제, 옵션 보존, 공통 도구 결과와 실패 출력을 검사합니다. 최초 화면에는 워크스페이스 그룹이나 별도의 환경/프로젝트 탐색 항목이 없습니다.
+- 빌드한 앱에서 `python3 tests/native_projects.py /Users/maxkwon/Work/airdata --restart`를 통과했습니다. 하단 설정 버튼에서 진단/준비를 열고, 등록된 AIRDATA 항목을 선택하면 빌드/실행을 바로 열며, `+`가 실제 네이티브 폴더 선택기를 엽니다. 선택기를 취소하고 앱을 다시 열어도 등록 목록과 옵션을 보존합니다. 증거는 `.state/gui-projects.json`, `.state/gui-native-settings.png`, `.state/gui-native-selected-project.png`입니다.
+- 네이티브 폴더 선택기 검증 범위는 열기와 취소입니다. 폴더 선택부터 등록 저장까지의 전체 네이티브 UI 자동화 성공은 확인하지 못했습니다. 등록 저장은 실제 파일시스템을 사용하는 Rust 테스트와 모의 브라우저 통합 테스트로 별도 검증했습니다.
+- 설정에서 실행한 `python3 tests/native_gui.py doctor --os windows linux macos --restart`가 20:55:09–15 KST에 통과했습니다. 실제 세 진단 결과와 완료 시각이 앱을 다시 열어도 유지됐습니다. 로그는 `.state/logs/20260909-205509-263367-matrix.log`, 화면은 `.state/gui-native-windows-linux-macos-doctor-reopened.png`입니다.
+
+등록/설정 변경은 기존 앱 설정 디렉터리에 저장합니다. AIRDATA 소스는 변경되지 않았습니다. 탐색 검증은 AIRDATA를 다시 빌드하거나 실행하지 않았으며 세 OS 릴리즈 완료를 입증하지 않습니다.
+
 ## 알려진 Parallels 실행 오류
 
 19:48:07 Ubuntu 준비가 종료 코드 255와 `PrlJob_GetResult: Invalid argument`로 실패했습니다. 실패한 실제 호출은 root의 `prlctl exec ... native.py setup-system`입니다. 이후 실행 도구를 수정하지 않은 상태에서 같은 작업이 성공했습니다.

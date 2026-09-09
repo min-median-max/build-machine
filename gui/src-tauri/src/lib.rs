@@ -1,6 +1,8 @@
 pub mod controller;
+pub mod preferences;
 
-use controller::{JobOutcome, JobRequest, OutputLine, Preferences};
+use controller::{JobOutcome, JobRequest, OutputLine};
+use preferences::Preferences;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -19,22 +21,28 @@ fn preference_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn load_preferences(app: tauri::AppHandle) -> Result<Preferences, String> {
-    let path = preference_path(&app)?;
-    if path.is_file() {
-        return serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?).map_err(|e| e.to_string());
-    }
-    let root = controller::find_controller();
-    let recent = controller::recent_projects(std::path::Path::new(&root));
-    Ok(Preferences { controller_path: root, project_path: recent.first().cloned(), platforms: vec!["linux".into()] })
+    preferences::load(&preference_path(&app)?, controller::find_controller())
 }
 
 #[tauri::command]
 fn save_preferences(app: tauri::AppHandle, preferences: Preferences) -> Result<(), String> {
+    preferences::save(&preference_path(&app)?, &preferences)
+}
+
+#[tauri::command]
+fn register_project(app: tauri::AppHandle, mut preferences: Preferences, project_path: String) -> Result<Preferences, String> {
+    preferences::register(&mut preferences, &project_path)?;
+    preferences::save(&preference_path(&app)?, &preferences)?;
+    Ok(preferences)
+}
+
+#[tauri::command]
+fn open_settings_folder(app: tauri::AppHandle) -> Result<(), String> {
     let path = preference_path(&app)?;
-    fs::create_dir_all(path.parent().ok_or("설정 폴더가 없어요.")?).map_err(|e| e.to_string())?;
-    let partial = path.with_extension("partial");
-    fs::write(&partial, serde_json::to_vec_pretty(&preferences).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    fs::rename(partial, path).map_err(|e| e.to_string())
+    let directory = path.parent().ok_or("설정 폴더가 없어요.")?;
+    fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    let status = std::process::Command::new("/usr/bin/open").arg(directory).status().map_err(|e| e.to_string())?;
+    if status.success() { Ok(()) } else { Err("설정 폴더를 열지 못했어요.".into()) }
 }
 
 #[tauri::command]
@@ -63,7 +71,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(Jobs::default())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![load_preferences, save_preferences, get_overview, start_job, open_log_folder])
+        .invoke_handler(tauri::generate_handler![load_preferences, save_preferences, register_project, open_settings_folder, get_overview, start_job, open_log_folder])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.state::<Jobs>().busy.load(Ordering::SeqCst) { api.prevent_close(); }

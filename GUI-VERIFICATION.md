@@ -15,6 +15,17 @@ Verified on 2026-09-09, macOS ARM64 and Parallels Desktop 27.0.1 (58670). The im
 
 Native actions and window capture are maintained in `tests/native_gui.py` and `tests/gui_window.js`. AIRDATA sources, stored data and its running guest applications were preserved. GUI-driven application build/launch and package installation were not repeated during these setup checks; previous AIRDATA coverage remains in [verification.md](verification.md).
 
+## Registered projects and shared settings
+
+Verified on 2026-09-09 in the working tree based on `7c78a15`. The tested `gui/` Git tree is `bfa44cc35dcb4db7f2d0593a24c75e9882555d3f`. The deployed executable SHA-256 is `202e71b2ed40139f7e3458e5581eda2dc9c5d33cfa56b4a512bce0d883f9c3d9`, at the same unsigned ARM64 `0.0.1` bundle path above.
+
+- `python3 desktop.py test`: eight Rust tests and nine browser tests passed. The real-Ubuntu bridge test remains opt-in. Settings tests cover preservation of the initial selected project, real Git-folder validation, canonical duplicate registration, atomic saving and independent environment/project options. Browser tests cover explicit registration, project selection, removal, persisted options, shared tool results and failure output. The initial view has no workspace grouping or separate Environment/Projects navigation entries.
+- `python3 tests/native_projects.py /Users/maxkwon/Work/airdata --restart` passed against the built app. The bottom Settings button exposes diagnosis/setup, selecting the registered AIRDATA entry directly exposes build/run, and `+` opens the actual native folder picker. Cancelling that picker and restarting preserve registrations and options. Evidence: `.state/gui-projects.json`, `.state/gui-native-settings.png`, `.state/gui-native-selected-project.png`.
+- Native picker verification covers opening and cancellation. A complete folder-selection-to-registration save was not established by native UI automation; registration persistence is covered separately by real filesystem Rust tests and mocked browser integration tests.
+- `python3 tests/native_gui.py doctor --os windows linux macos --restart` passed through Settings at 20:55:09–15 KST. All three actual diagnoses and their completion times survived reopening. Log: `.state/logs/20260909-205509-263367-matrix.log`; screenshot: `.state/gui-native-windows-linux-macos-doctor-reopened.png`.
+
+Registration/settings changes are saved in the existing application configuration directory. AIRDATA sources remain clean. These navigation checks did not rebuild or relaunch AIRDATA and do not establish three-OS release completion.
+
 ## Known Parallels execution failure
 
 Ubuntu setup at 19:48:07 failed with exit 255 and `PrlJob_GetResult: Invalid argument`. The actual failed invocation was root `prlctl exec ... native.py setup-system`. The same action later succeeded without an execution-client fix.

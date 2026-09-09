@@ -17,7 +17,9 @@ This repository provides inspectable build-machine commands that run without Cod
 
 ## Commands
 
-The [Tauri 2 desktop app](GUI.md) provides project selection, Windows/Ubuntu/macOS selection, diagnosis, automatic prerequisite setup, build, optional launch and live logs. Each environment retains its last diagnosis/setup result and completion time across app restarts. Connection state and historical tool checks are displayed separately. [Project build requirements](PROJECTS.md) describe the supported layouts and remaining framework coverage.
+The [Tauri 2 desktop app](GUI.md) centers on registered projects. Use `+` to register a Git folder, then select its entry to configure build targets, build and launch. Each project retains its own options. The bottom **Settings** button opens Windows/Ubuntu/macOS diagnosis and automatic tool setup shared by all projects. Each environment retains its last diagnosis/setup result and completion time across app restarts. Connection state and historical tool checks are displayed separately. [Project build requirements](PROJECTS.md) describe the supported layouts and remaining framework coverage.
+
+Registration and GUI settings live in `~/Library/Application Support/local.buildmachine.desktop/preferences.json`. Use **Settings → Open settings folder** to inspect that file. Project registrations are independent of recent build logs. Removing a registration leaves its source folder and app data intact.
 
 ```sh
 cd ~/Work/build-machine
