@@ -1,9 +1,11 @@
 use build_machine_desktop::controller::{self, Action, JobRequest, OutputLine};
+use build_machine_desktop::preferences::ExecutionMode;
 use std::{fs, sync::{Arc, Mutex}};
 
 fn request(root: &std::path::Path) -> JobRequest {
     JobRequest { controller_path: root.to_string_lossy().into(), project_path: None,
-        platforms: vec!["linux".into()], action: Action::Doctor, launch: false }
+        platforms: vec!["linux".into()], action: Action::Doctor, launch: false,
+        workflow: None, event: "workflow_dispatch".into(), ref_name: None, execution: ExecutionMode::Sequential }
 }
 
 #[test]

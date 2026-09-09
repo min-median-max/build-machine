@@ -1,6 +1,14 @@
 # Verification
 
+[한국어](verification.ko.md)
+
 The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment results and known intermittent Parallels execution failure are recorded separately in [GUI-VERIFICATION.md](GUI-VERIFICATION.md).
+
+## Workflow replay implementation
+
+The workflow replay implementation adds a strict parser and local runner for the supported GitHub Actions subset. `python3 -m unittest discover -s tests -v` passes 23 tests on the macOS host, including explicit unsupported-action and missing-gate failures, immutable ref snapshots, repository-root validation, sequential/parallel report equivalence and native workflow stage execution. `~/.cargo/bin/cargo test --manifest-path gui/src-tauri/Cargo.toml` passes 10 Rust tests (one configured Ubuntu doctor test remains ignored), and `pnpm --dir gui test` passes 13 browser tests. `pnpm --dir gui run build` passes the TypeScript and Vite build.
+
+The maintained AIRDATA workflow currently has no test or smoke step and no `build-machine: skip ... reason=...` comments. `ci validate` therefore rejects it with the required missing-gate message until the repository documents those omissions. No AIRDATA source, GitHub workflow, signing credential, upload or release was changed or invoked by these checks. Windows and Ubuntu workflow replay code is implemented and covered by controlled tests; live replay still requires an actual run on each configured guest.
 
 The Windows and Ubuntu build and launch baselines passed on 2026-09-09. Three-OS release rehearsal, installer verification, and GitHub Actions parity are not complete.
 

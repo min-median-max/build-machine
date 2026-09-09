@@ -2,7 +2,7 @@
 
 [한국어](PROJECTS.ko.md)
 
-These are the build machine's current project requirements. Tauri and Wails do not require a common build-machine manifest. This repository does not yet read such a manifest or validate a complete project contract through `doctor`.
+These are the build machine's current project requirements. A project is registered only at the Git repository root. Tauri and Wails do not require a separate build-machine manifest: the repository workflow is the CI contract when workflow replay is selected.
 
 ## Current automatic recipes
 
@@ -32,7 +32,17 @@ Custom commands run in `cmd.exe` on Windows and `/bin/sh` on Linux/macOS. Supply
 - Produce one identifiable executable, or specify `--artifact`. Tauri macOS builds must produce exactly one `.app`. Successful compilation, package creation, package installation, visible launch and application feature checks are separate results.
 - Keep release signing and publication settings separate from local rehearsal. The current workers do not verify production signing, notarization or release publication. An unsigned local success does not establish GitHub Actions release parity.
 
-`doctor` currently checks machine prerequisites and declared versions. It does not validate all project files, framework compatibility, packaging requirements or feature behavior. Complete project-contract validation and reusable per-project release definitions remain unfinished.
+`doctor` checks machine prerequisites and declared versions. `ci validate` checks the selected workflow's project contract; it does not claim application feature behavior, production signing, notarization or GitHub publication. A workflow can therefore pass with explicit `passed_with_limits` status while those external services remain unverified.
+
+## Workflow replay contract
+
+`ci validate` and `ci run` read one `.github/workflows/*.yml` file. The supported subset includes jobs with `runs-on`, `needs`, `if`, `env`, `with`, `working-directory`, `run`, and the adapters listed below. Jobs with containers, services, reusable workflows or matrix strategies fail validation instead of being silently changed.
+
+Supported action adapters are `actions/checkout`, `pnpm/action-setup`, `actions/setup-node`, `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`, `tauri-apps/tauri-action`, `actions/upload-artifact`, `actions/upload-pages-artifact`, and `softprops/action-gh-release`. Shell `run` steps execute in the selected worker. Checkout, cache, artifact upload, release, signing and GitHub status operations use local adapters; the report marks those limits and never treats them as production publication.
+
+The default stage order is `setup`, `test`, `build`, `smoke`, then `release`. A workflow with no test or smoke command must include an exact comment such as `# build-machine: skip smoke reason=desktop smoke is verified separately`. The reason is stored in the platform result. Unknown actions, expressions, event/ref mismatches and missing gates fail validation.
+
+The source is either the current Git working tree, including nonignored edits, or an immutable `--ref` archive. Every matrix entry records the same source revision, source hash and dirty state. Sequential execution is the default; `--execution parallel` runs selected operating systems concurrently while retaining identical per-stage fields and deterministic dashboard ordering.
 
 For this GUI, `python3 desktop.py dev` starts the React development server and Rust/Tauri process together. Other projects retain their own Tauri or Wails development commands and configuration. No fixed frontend port is required by the build machine.
 

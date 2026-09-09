@@ -37,6 +37,11 @@
       "Microsoft.VisualStudio.Component.Windows11SDK.26100"
     ]
   },
+  "retention": {
+    "maxRunsPerProject": 20,
+    "maxBytes": 21474836480,
+    "days": 30
+  },
   "platforms": {
     "windows": {
       "vm": "Windows 11",

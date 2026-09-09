@@ -95,7 +95,8 @@ export default function App() {
       if (line.startsWith('PLATFORM: ')) setActive(line.slice(10).trim() as Platform);
     };
     try {
-      const outcome = await invoke<JobOutcome>('start_job', { request: { controllerPath: preferences.controllerPath, projectPath: environmentAction ? null : project!.path, platforms, action, launch: action === 'build' && !!project?.launch }, onOutput: stream });
+      const outcome = await invoke<JobOutcome>('start_job', { request: { controllerPath: preferences.controllerPath, projectPath: environmentAction ? null : project!.path, platforms, action, launch: action === 'build' && !!project?.launch,
+        workflow: environmentAction ? null : (project?.workflow || null), event: environmentAction ? 'workflow_dispatch' : (project?.event || 'workflow_dispatch'), refName: environmentAction ? null : (project?.refName || null), execution: environmentAction ? 'sequential' : (project?.execution || 'sequential') }, onOutput: stream });
       setLastOutcome({ success: outcome.exitCode === 0, action, seconds: Math.floor((Date.now() - startTime.current) / 1000) });
       if (outcome.result && (action === 'doctor' || action === 'setup')) {
         setResults(old => { const next = { ...old }; for (const [os, result] of Object.entries(outcome.result!.results)) next[os as Platform] = { ...result!, action }; return next; });

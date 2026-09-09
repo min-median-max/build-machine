@@ -134,6 +134,23 @@ test('a missing controller can be corrected through the native folder picker', a
   await expect(page.getByRole('button', { name: '환경 진단', exact: true })).toBeEnabled();
 });
 
+test('workflow replay settings pass event, ref and parallel execution to the controller', async ({ page }) => {
+  await desktopMock(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'airdata 빌드 화면', exact: true }).click();
+  await page.getByLabel('워크플로 경로').fill('.github/workflows/release.yml');
+  await page.getByLabel('워크플로 이벤트').selectOption('push');
+  await page.getByLabel('워크플로 ref').fill('v0.1.0');
+  await page.getByRole('button', { name: '병렬', exact: true }).click();
+  await page.getByRole('button', { name: '빌드 시작', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('빌드 완료');
+  const request = await page.evaluate(() => (window as any).desktopCalls.find((call: any) => call.command === 'start_job').args);
+  expect(request.workflow).toBe('.github/workflows/release.yml');
+  expect(request.event).toBe('push');
+  expect(request.refName).toBe('v0.1.0');
+  expect(request.execution).toBe('parallel');
+});
+
 test('a failure before a result file exists shows the actual process error', async ({ page }) => {
   await desktopMock(page);
   await page.goto('/');

@@ -5,9 +5,10 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use crate::preferences::ExecutionMode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Action { Doctor, Setup, Build, Run }
 
@@ -25,7 +26,17 @@ pub struct JobRequest {
     pub platforms: Vec<String>,
     pub action: Action,
     pub launch: bool,
+    #[serde(default)]
+    pub workflow: Option<String>,
+    #[serde(default = "default_event")]
+    pub event: String,
+    #[serde(default)]
+    pub ref_name: Option<String>,
+    #[serde(default)]
+    pub execution: ExecutionMode,
 }
+
+fn default_event() -> String { "workflow_dispatch".into() }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,15 +115,23 @@ pub fn arguments(request: &JobRequest, root: &Path, result: &Path) -> Result<Vec
     if request.platforms.is_empty() || request.platforms.iter().any(|os| !["windows", "linux", "macos"].contains(&os.as_str())) {
         return Err("실행할 운영체제를 하나 이상 선택해주세요.".into());
     }
-    let mut args = vec!["-u".to_owned(), root.join("build.py").to_string_lossy().into_owned(), request.action.name().into()];
+    let workflow_run = request.action == Action::Build && request.workflow.as_ref().is_some_and(|path| !path.trim().is_empty());
+    let mut args = vec!["-u".to_owned(), root.join("build.py").to_string_lossy().into_owned()];
+    if workflow_run { args.extend(["ci".into(), "run".into()]); } else { args.push(request.action.name().into()); }
     if matches!(request.action, Action::Build | Action::Run) {
         let project = request.project_path.as_ref().filter(|path| Path::new(path).is_dir()).ok_or("프로젝트 폴더를 선택해주세요.")?;
         args.push(project.clone());
     }
     args.push("--os".into());
     args.extend(request.platforms.iter().cloned());
+    args.push("--execution".into());
+    args.push(match request.execution { ExecutionMode::Sequential => "sequential".into(), ExecutionMode::Parallel => "parallel".into() });
     args.extend(["--result-file".into(), result.to_string_lossy().into_owned()]);
-    if request.launch && matches!(request.action, Action::Build) { args.push("--run".into()); }
+    if workflow_run {
+        args.extend(["--workflow".into(), request.workflow.clone().unwrap()]);
+        args.extend(["--event".into(), request.event.clone()]);
+        if let Some(reference) = &request.ref_name { args.extend(["--ref".into(), reference.clone()]); }
+    } else if request.launch && matches!(request.action, Action::Build) { args.push("--run".into()); }
     Ok(args)
 }
 
@@ -148,7 +167,7 @@ pub fn execute(request: JobRequest, emit: Arc<dyn Fn(OutputLine) + Send + Sync>)
     } else { None };
     if status.success() {
         if let Some(report) = &result {
-            if report.get("status").is_some() && (report["status"] != "success"
+            if report.get("status").is_some() && (!["success", "passed_with_limits"].contains(&report["status"].as_str().unwrap_or(""))
                 || request.platforms.iter().any(|os| report["results"][os]["success"] != true)) {
                 return Err(format!("명령은 종료됐지만 완료 결과가 확인되지 않았어요: {}", result_path.display()));
             }

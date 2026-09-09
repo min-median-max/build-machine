@@ -14,6 +14,9 @@ Codex 없이 실행하고 내용을 확인할 수 있는 빌드 머신 명령을
 - `run PROJECT`는 마지막으로 성공한 실행 파일을 로그인한 사용자의 화면에서 실행합니다. 반복 실행하면 같은 실행 파일의 실행 중인 프로세스를 재사용합니다. 프로세스와 창 확인은 실행 검증이며 모든 앱 기능을 보증하지는 않습니다.
 - 표준 Tauri 2 프로젝트는 잠긴 의존성으로 릴리스 실행 파일을 만듭니다. Windows의 Wails 2 프로젝트는 Go 모듈에 지정된 버전의 CLI를 사용합니다. 다른 구조와 네이티브 Wails 프로젝트는 빌드 명령과 실행 파일의 상대 경로를 직접 지정할 수 있습니다.
 - 명령과 로그는 열어볼 수 있는 파일로 남깁니다. 자격 증명, 대화 기억, 어시스턴트 전용 서비스에 의존하지 않습니다.
+- 등록 프로젝트는 Git 저장소 루트입니다. 모노레포의 하위 앱은 workflow 단계의 `working-directory`로 선택하며 하위 디렉터리를 별도 프로젝트로 등록하지 않습니다.
+- `ci validate`는 저장소 GitHub Actions workflow를 읽고 지원하지 않는 action·컨테이너·서비스·표현식이 있으면 실패합니다. `ci run`은 선택한 OS 작업자에서 지원하는 `uses`와 `run` 단계를 실행하고 checkout·캐시·산출물·릴리즈·서명은 로컬 어댑터로 대체합니다.
+- Workflow 재현은 현재 작업 트리 또는 명시한 커밋·브랜치·태그를 사용합니다. 해석한 리비전, 변경 상태, 이벤트, 단계 명령, 단계 결과, 산출물 체크섬과 제한을 기록합니다. workflow에 test나 smoke 단계가 없으면 `# build-machine: skip <stage> reason=...` 주석으로 명시해야 합니다.
 
 ## 명령
 
@@ -30,7 +33,7 @@ python3 desktop.py build --run
 
 맥에는 Python 3, Git, `prlctl exec`를 지원하는 Parallels와 Parallels Tools가 필요합니다. 선택한 VM이 실행 중이고 데스크톱 사용자가 로그인해 있어야 합니다. Linux에는 Python 3.10 이상이 필요하며 Ubuntu 26.04에는 Python 3.14가 있습니다. VM 이름과 도구 버전은 [machine.json](machine.json)에 있습니다.
 
-공통 제어 명령은 `windows`, `linux`, `macos`, `all`을 선택합니다. `--os windows linux`처럼 여러 이름을 지정할 수 있으며, `--os`를 생략하면 세 운영체제를 선택합니다. 여러 플랫폼을 빌드할 때 소스 스냅샷을 한 번 만들고, 선택한 각 플랫폼을 실행하고 결과를 기록합니다. 하나라도 실패하면 전체 명령도 실패합니다. `--result-file PATH`는 다른 인터페이스를 위한 구조화된 결과를 기록합니다. 진단/준비 결과와 시각은 `.state/tool-status.json`에 유지하며 머신 설정이 바뀌면 이전 결과를 표시하지 않습니다.
+공통 제어 명령은 `windows`, `linux`, `macos`, `all`을 선택합니다. `--os windows linux`처럼 여러 이름을 지정할 수 있으며, `--os`를 생략하면 세 운영체제를 선택합니다. 매트릭스 실행은 기본적으로 순차 실행이고 `--execution parallel`을 지정하면 선택한 OS를 동시에 실행합니다. 병렬 실행도 단계·명령·로그·재시도·산출물·실패 원인을 순차 실행과 같은 필드에 기록합니다. 하나의 소스 스냅샷을 사용하고 모든 선택 플랫폼의 결과를 기다린 뒤 하나라도 실패하면 전체 명령도 실패합니다. `--result-file PATH`는 다른 인터페이스를 위한 구조화된 결과를 기록합니다. 진단/준비 결과와 시각은 `.state/tool-status.json`에 유지하며 머신 설정이 바뀌면 이전 결과를 표시하지 않습니다.
 
 ```sh
 cd ~/Work/build-machine
@@ -38,6 +41,10 @@ python3 build.py doctor --os linux
 python3 build.py setup --os linux
 python3 build.py build ~/Work/airdata --os linux --run
 python3 build.py run ~/Work/airdata --os linux
+
+# 저장소 workflow 재현. 생략한 test/smoke는 위 skip 주석으로 명시해야 합니다.
+python3 build.py ci validate ~/Work/airdata --workflow .github/workflows/release-macos.yml --event workflow_dispatch
+python3 build.py ci run ~/Work/airdata --workflow .github/workflows/release-macos.yml --event workflow_dispatch --ref v0.1.0 --execution parallel --os macos
 ```
 
 `build`는 누락된 필수 도구를 자동 설치하므로 별도의 `setup`은 선택 사항입니다. Linux 시스템 패키지는 Parallels를 통해 root로 설치하며, 빌드와 앱 실행은 로그인한 데스크톱 사용자로 수행합니다. 실행 명령은 해당 사용자의 systemd 환경에서 데스크톱 연결 설정만 읽고 프로세스가 계속 실행되는지 검사합니다. 실제 화면 표시는 별도 화면 캡처로 확인합니다.
@@ -56,7 +63,7 @@ python3 winbuild.py run ~/Work/airdata
 
 전송에는 `WindowsBuildMachine`이라는 읽기 전용 Parallels 공유 폴더를 사용합니다. 제어 스크립트도 Windows에 복사하므로 Windows PowerShell에서 직접 열어보고 실행할 수 있습니다. 맥의 전송 파일·실행 기록·로그는 Git에서 제외한 `.state/`에 있습니다. Windows의 프로젝트와 빌드 기록은 `C:\BuildMachine\projects`에 있습니다. MSVC는 `C:\BuildTools`, 사용자 도구는 `%LOCALAPPDATA%\WindowsBuildMachine`에 설치합니다.
 
-Linux는 같은 공유 폴더를 `/media/psf/WindowsBuildMachine`에서 읽습니다. Linux와 macOS는 관리하는 사용자 도구를 `~/.local/share/build-machine`에, 빌드 기록을 `~/.local/state/build-machine/PROJECT_KEY/latest.json`에 보관합니다. 네이티브 준비 명령은 시스템 기본 Node.js와 Go 설치를 보존합니다. Ubuntu의 Tauri 빌드는 ARM64 실행 파일과 `.deb`를 만들지만, 패키지 생성이 시스템 패키지 설치까지 검증한 것은 아닙니다. 세 운영체제 전체의 `release` 경로는 구현 중이며 GitHub Actions 릴리즈 사전 검증이 완료된 상태는 아닙니다.
+Linux는 같은 공유 폴더를 `/media/psf/WindowsBuildMachine`에서 읽습니다. Linux와 macOS는 관리하는 사용자 도구를 `~/.local/share/build-machine`에, 빌드 기록을 `~/.local/state/build-machine/PROJECT_KEY/latest.json`에 보관합니다. 네이티브 준비 명령은 시스템 기본 Node.js와 Go 설치를 보존합니다. Ubuntu의 Tauri 빌드는 ARM64 실행 파일과 `.deb`를 만들지만, 패키지 생성이 시스템 패키지 설치까지 검증한 것은 아닙니다. Workflow 재현은 서명하지 않은 로컬 패키징과 로컬 산출물·릴리즈 어댑터를 검증하며 서명·공증·GitHub 업로드·상태 보고는 명시적으로 미검증으로 기록합니다.
 
 MSVC는 Microsoft가 유지보수하는 Visual Studio 2022 채널을 사용하며 필수 구성 요소를 확인합니다. 다른 도구 버전과 다운로드 체크섬은 `machine.json`에 고정합니다. 구성 요소를 충족하는 기존 MSVC 설치는 자동 업그레이드하지 않습니다. 반복 가능한 환경 구성이며, 컴파일 결과의 바이트 단위 동일성을 보장한다는 의미는 아닙니다.
 

@@ -14,6 +14,9 @@ This repository provides inspectable build-machine commands that run without Cod
 - `run PROJECT` starts the last successful executable in the signed-in desktop. Repeating it reuses that executable's running process. A process/window check verifies launch; it does not certify all application features.
 - Standard Tauri 2 projects use their locked dependencies and produce a release executable. Windows Wails 2 projects use the CLI version declared by their Go module. Other layouts and native Wails projects can supply an explicit build command and executable path.
 - Commands and logs are inspectable files. No credentials, conversational memory or assistant-specific service is required.
+- A registered project is the Git repository root. Monorepos select a sub-application through a workflow step's `working-directory`; a subdirectory cannot be registered as its own project.
+- `ci validate` reads the repository's GitHub Actions workflow and fails closed for unsupported actions, containers, services or expressions. `ci run` executes supported `uses` and `run` steps in the selected OS workers, with local adapters for checkout, caches, artifacts, releases and signing.
+- Workflow replay accepts the current working tree or an explicit commit, branch or tag. It records the resolved revision, dirty state, event, step commands, stage results, artifact checksums and limits. Test and smoke stages require an explicit `# build-machine: skip <stage> reason=...` comment when the workflow does not contain them.
 
 ## Commands
 
@@ -30,7 +33,7 @@ After building, open `gui/src-tauri/target/release/bundle/macos/Build Machine.ap
 
 Requirements on the Mac: Python 3, Git, and Parallels with working `prlctl exec` and Parallels Tools. The selected VM must be running with a desktop user signed in. Linux requires Python 3.10 or later; Ubuntu 26.04 supplies Python 3.14. The VM names and tool versions are in [machine.json](machine.json).
 
-The common controller selects `windows`, `linux`, `macos` or `all`. Supply multiple names with `--os windows linux`; omitting `--os` selects all three. A multi-platform build captures one source snapshot, attempts each selected platform, records each result and fails overall if any platform fails. `--result-file PATH` writes the structured result for other interfaces. Diagnosis/setup results and timestamps persist in `.state/tool-status.json`; changed machine configuration invalidates those displayed results.
+The common controller selects `windows`, `linux`, `macos` or `all`. Supply multiple names with `--os windows linux`; omitting `--os` selects all three. Matrix execution is sequential by default; `--execution parallel` runs selected operating systems concurrently while preserving the same stage, command, log, retry, artifact and failure fields. A multi-platform operation captures one source snapshot, waits for every selected platform, records each result and fails overall if any platform fails. `--result-file PATH` writes the structured result for other interfaces. Diagnosis/setup results and timestamps persist in `.state/tool-status.json`; changed machine configuration invalidates those displayed results.
 
 ```sh
 cd ~/Work/build-machine
@@ -38,6 +41,11 @@ python3 build.py doctor --os linux
 python3 build.py setup --os linux
 python3 build.py build ~/Work/airdata --os linux --run
 python3 build.py run ~/Work/airdata --os linux
+
+# Reproduce a repository workflow. Omitted test or smoke gates require the
+# explicit skip comment described above.
+python3 build.py ci validate ~/Work/airdata --workflow .github/workflows/release-macos.yml --event workflow_dispatch
+python3 build.py ci run ~/Work/airdata --workflow .github/workflows/release-macos.yml --event workflow_dispatch --ref v0.1.0 --execution parallel --os macos
 ```
 
 `build` installs missing prerequisites automatically. A separate `setup` is optional. Linux system packages are installed as root through Parallels, while builds and launches run as the signed-in desktop user. The launch command reads only the desktop connection settings from that user's systemd environment. It checks that the process remains running. A separate screen capture verifies visible rendering.
@@ -56,7 +64,7 @@ The same commands accept another project directory. `winbuild.py --vm NAME` sele
 
 The machine uses a read-only Parallels share named `WindowsBuildMachine` for transfer. It copies its control scripts to Windows, so they can also be inspected and invoked in Windows PowerShell. Local transfer files, execution records and logs are under `.state/` and excluded from Git. Windows projects and their build receipts are under `C:\BuildMachine\projects`. MSVC is installed at `C:\BuildTools`; user tools are under `%LOCALAPPDATA%\WindowsBuildMachine`.
 
-Linux reads the same share at `/media/psf/WindowsBuildMachine`. Linux and macOS keep managed user tools under `~/.local/share/build-machine` and build receipts under `~/.local/state/build-machine/PROJECT_KEY/latest.json`. Native setup preserves the system's default Node.js and Go installations. Ubuntu Tauri builds produce an ARM64 executable and a `.deb`; creating the package does not verify a system package installation. The `release` path is unfinished across all three platforms and is not a completed GitHub Actions release rehearsal.
+Linux reads the same share at `/media/psf/WindowsBuildMachine`. Linux and macOS keep managed user tools under `~/.local/share/build-machine` and build receipts under `~/.local/state/build-machine/PROJECT_KEY/latest.json`. Native setup preserves the system's default Node.js and Go installations. Ubuntu Tauri builds produce an ARM64 executable and a `.deb`; creating the package does not verify a system package installation. Workflow replay verifies unsigned local packaging and records local artifact/release adapters; signing, notarization, GitHub upload and status reporting remain explicitly unverified.
 
 MSVC uses Microsoft's serviced Visual Studio 2022 channel and verifies required components. Other tool versions and download checksums are pinned in `machine.json`. Setup does not automatically upgrade an existing MSVC installation that satisfies the component requirements. This is repeatable provisioning, not a claim of bit-for-bit reproducible compiler output.
 

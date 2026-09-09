@@ -2,7 +2,7 @@
 
 [English](PROJECTS.md)
 
-현재 빌드 머신이 프로젝트에 요구하는 조건입니다. Tauri와 Wails 자체가 공통 빌드 머신 설정 파일을 요구하는 것은 아닙니다. 이 저장소는 아직 그런 파일을 읽거나 `doctor`로 프로젝트 규약 전체를 검사하지 않습니다.
+현재 빌드 머신이 프로젝트에 요구하는 조건입니다. 프로젝트는 Git 저장소 루트에서만 등록합니다. Tauri와 Wails 자체가 별도 빌드 머신 manifest를 요구하지 않으며 workflow 재현을 선택하면 저장소 workflow가 CI 계약이 됩니다.
 
 ## 현재 자동 빌드 절차
 
@@ -32,7 +32,17 @@ python3 build.py build /path/to/project --os linux \
 - 실행 파일 후보가 하나가 되도록 하거나 `--artifact`로 지정합니다. Tauri macOS 빌드는 `.app` 하나를 만들어야 합니다. 컴파일 성공, 패키지 생성, 패키지 설치, 실제 창 표시, 앱 기능 검사는 별도 결과입니다.
 - 릴리즈 서명과 게시 설정을 로컬 검증과 구분합니다. 현재 작업 스크립트는 운영 서명·공증·릴리즈 게시를 검증하지 않습니다. 서명하지 않은 로컬 빌드 성공으로 GitHub Actions 릴리즈와의 동등성이 확인되지는 않습니다.
 
-현재 `doctor`는 머신의 필수 도구와 선언된 버전을 검사합니다. 프로젝트 파일 전체, 프레임워크 호환성, 패키징 조건, 기능 동작까지 검사하지는 않습니다. 프로젝트 규약 전체의 진단과 프로젝트별 재사용 가능한 릴리즈 정의는 아직 구현하지 않았습니다.
+현재 `doctor`는 머신의 필수 도구와 선언된 버전을 검사합니다. `ci validate`는 선택한 workflow의 프로젝트 계약을 검사하지만 앱 기능, 운영 서명, 공증이나 GitHub 게시를 보증하지 않습니다. 외부 서비스가 미검증인 workflow는 `passed_with_limits` 상태로 명시할 수 있습니다.
+
+## Workflow 재현 규약
+
+`ci validate`와 `ci run`은 하나의 `.github/workflows/*.yml` 파일을 읽습니다. `runs-on`, `needs`, `if`, `env`, `with`, `working-directory`, `run`과 아래에 정의한 action 어댑터를 지원합니다. 컨테이너, 서비스, 재사용 workflow, matrix 전략이 있는 job은 조용히 바꾸지 않고 검증에서 실패합니다.
+
+지원 action 어댑터는 `actions/checkout`, `pnpm/action-setup`, `actions/setup-node`, `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`, `tauri-apps/tauri-action`, `actions/upload-artifact`, `actions/upload-pages-artifact`, `softprops/action-gh-release`입니다. `run` 단계는 선택한 작업자에서 실행합니다. checkout·캐시·산출물 업로드·릴리즈·서명·GitHub 상태 작업은 로컬 어댑터를 사용하며 보고서에 제한을 기록하고 실제 게시로 취급하지 않습니다.
+
+기본 단계 순서는 `setup`, `test`, `build`, `smoke`, `release`입니다. test나 smoke 명령이 없는 workflow는 `# build-machine: skip smoke reason=데스크톱 smoke는 별도 검증`처럼 정확한 주석을 포함해야 합니다. 그 사유는 플랫폼 결과에 기록합니다. 알 수 없는 action, 지원하지 않는 표현식, 이벤트/ref 불일치와 게이트 누락은 검증에서 실패합니다.
+
+소스는 현재 Git 작업 트리(무시되지 않은 수정 포함) 또는 변경할 수 없는 `--ref` archive 중 하나입니다. matrix 각 항목은 같은 소스 리비전·소스 hash·변경 상태를 기록합니다. 순차 실행이 기본이며 `--execution parallel`은 선택한 OS를 동시에 실행하고 동일한 단계 필드와 대시보드 순서를 유지합니다.
 
 이 GUI에서는 `python3 desktop.py dev`로 React 개발 서버와 Rust/Tauri 프로세스를 함께 실행합니다. 다른 프로젝트는 자체 Tauri 또는 Wails 개발 명령과 설정을 사용합니다. 빌드 머신이 화면의 포트 번호를 고정하도록 요구하지는 않습니다.
 
