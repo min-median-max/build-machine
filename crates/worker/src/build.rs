@@ -32,6 +32,9 @@ pub struct Receipt {
     pub app: Option<String>,
     pub architectures: String,
     pub artifacts: Vec<build_machine_core::report::Artifact>,
+    /// What opening the produced package established, for a release rehearsal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation_check: Option<String>,
     pub log: String,
 }
 
@@ -150,15 +153,22 @@ fn executable_name(program: &str) -> String {
     }
 }
 
+/// Whether a path stays inside a directory, comparing both in the same form.
+///
+/// `canonicalize` returns an extended-length path on Windows (`\\?\C:\…`),
+/// so a resolved path never starts with a base that was not resolved the same
+/// way. Resolving both is what makes the containment check mean anything.
+pub fn contained_in(base: &Path, path: &Path) -> Option<PathBuf> {
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    resolved.starts_with(&base).then_some(resolved)
+}
+
 /// Find the single produced executable, or use the one the recipe named.
 fn locate_executable(source: &Path, output: &Path, artifact: Option<&str>) -> Result<PathBuf> {
     if let Some(artifact) = artifact {
-        let path = source.join(artifact);
-        let resolved = path.canonicalize().unwrap_or(path);
-        if !resolved.starts_with(source) {
-            bail!("The executable must be inside the project build directory.");
-        }
-        return Ok(resolved);
+        return contained_in(source, &source.join(artifact))
+            .context("The executable must be inside the project build directory.");
     }
     let mut candidates = Vec::new();
     for entry in std::fs::read_dir(output).with_context(|| format!("빌드 출력이 없어요: {}", output.display()))? {
@@ -224,6 +234,19 @@ pub fn development_bundle() -> Vec<String> {
     }
 }
 
+/// Describe an application copied out of a package.
+#[cfg(target_os = "macos")]
+fn from_installed(installed: &Path, _target: &str) -> Result<Produced> {
+    let executable = crate::macos::bundle_executable(installed)?;
+    let architectures = crate::macos::architectures(&executable, &[])?;
+    Ok(Produced { executable, app: Some(installed.to_path_buf()), architectures })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn from_installed(installed: &Path, target: &str) -> Result<Produced> {
+    Ok(Produced { executable: installed.to_path_buf(), app: None, architectures: target.to_owned() })
+}
+
 #[cfg(target_os = "macos")]
 fn tauri_output(
     _source: &Path,
@@ -273,6 +296,7 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
     let target = request.target.clone();
     let mut commands: Vec<String> = Vec::new();
     let (executable, app, artifacts, architectures);
+    let mut checked: Option<crate::package::Checked> = None;
 
     match framework {
         Framework::Tauri => {
@@ -293,11 +317,26 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
             stream::checked(&program, &arguments, Some(&source), &environment)?;
             commands.push(format!("{program} {}", arguments.join(" ")));
             let output = source.join("src-tauri").join("target").join(&target).join("release");
-            let produced = tauri_output(&source, &output, request.artifact.as_deref(), &environment, &target)?;
+            artifacts = collect_artifacts(&output.join("bundle"), PACKAGE_EXTENSION)?;
+            if release && artifacts.is_empty() {
+                bail!("Release rehearsal did not produce an installable package.");
+            }
+            // Packaging can consume what it packages: the macOS disk-image
+            // bundler moves the application inside the image and leaves nothing
+            // behind. So the package is opened first, and what it carries is
+            // what the receipt describes and what a launch would run.
+            checked = if release {
+                Some(crate::package::check(Path::new(&artifacts[0].path), &directory, &environment)?)
+            } else {
+                None
+            };
+            let produced = match checked.as_ref().and_then(|value| value.installed.as_deref()) {
+                Some(installed) => from_installed(installed, &target)?,
+                None => tauri_output(&source, &output, request.artifact.as_deref(), &environment, &target)?,
+            };
             executable = produced.executable;
             app = produced.app;
             architectures = produced.architectures;
-            artifacts = collect_artifacts(&output.join("bundle"), PACKAGE_EXTENSION)?;
         }
         Framework::Custom => {
             let command = request.command.clone().context("Custom builds require a command.")?;
@@ -311,6 +350,9 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
             app = None;
             architectures = target.clone();
             artifacts = vec![artifact_of(&executable)?];
+            if release {
+                checked = Some(crate::package::check(&executable, &directory, &environment)?);
+            }
         }
         Framework::Wails2 => {
             bail!("Automatic recipes currently cover Tauri; supply a custom command for Wails.")
@@ -335,10 +377,14 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
         app: app.map(|path| path.to_string_lossy().into_owned()),
         architectures,
         artifacts,
+        installation_check: checked.map(|value| value.description),
         log: directory.join("build.log").to_string_lossy().into_owned(),
     };
     build_machine_core::report::write_atomic(&receipt_path, &receipt)?;
     build_machine_core::report::write_atomic(&latest, &receipt)?;
+    // A build directory is a whole dependency tree. Bounding them here is what
+    // keeps the machine that does the work from filling its own disk.
+    crate::workspace::prune(&root, &directory, &tools.machine.retention)?;
     println!("BUILT: {}", receipt.executable);
     Ok(receipt)
 }

@@ -8,9 +8,11 @@ mod build;
 mod ci;
 #[cfg(target_os = "macos")]
 mod macos;
+mod package;
 mod provision;
 mod run;
 mod stream;
+mod workspace;
 #[cfg(windows)]
 mod win32;
 
@@ -120,9 +122,6 @@ fn execute() -> Result<()> {
             tools.setup_user()?;
             let request = WorkRequest::load(request)?;
             let receipt = build::build(&request, &tools, true)?;
-            if receipt.artifacts.is_empty() {
-                anyhow::bail!("Release rehearsal did not produce an installable package.");
-            }
             println!("{}", serde_json::to_string_pretty(&receipt)?);
         }
         Command::Run { request } => {

@@ -230,31 +230,63 @@ jobs:
     assert!(restored["setup"].iter().all(|step| step.adapter != workflow::Adapter::Run));
 }
 
-/// A workflow written for one runner cannot be carried out on another. Saying
-/// so before anything starts beats failing inside someone else's build.
+/// A three-OS release workflow has a job per operating system. Each platform
+/// takes the jobs its own runner label claims, so the Windows job never runs on
+/// Linux and every platform still gets a complete set of stages.
 #[test]
-fn a_replay_is_refused_on_a_platform_the_workflow_was_not_written_for() {
+fn each_platform_replays_only_the_jobs_written_for_it() {
+    use build_machine_core::Platform;
     let parsed = load(
-        r#"# build-machine: skip test reason=fixture
-# build-machine: skip smoke reason=fixture
+        r#"# build-machine: skip smoke reason=fixture
 name: release
 on: workflow_dispatch
 jobs:
-  build:
+  macos:
     runs-on: macos-14
     steps:
+      - uses: actions/checkout@v4
+      - name: Test on macOS
+        run: cargo test
+      - uses: tauri-apps/tauri-action@v0
+  linux:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on Linux
+        run: cargo test
+      - uses: tauri-apps/tauri-action@v0
+  windows:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on Windows
+        run: cargo test
       - uses: tauri-apps/tauri-action@v0
 "#,
     )
     .unwrap();
-    assert!(workflow::check_platform(&parsed, build_machine_core::Platform::Macos).is_ok());
-    let error = workflow::check_platform(&parsed, build_machine_core::Platform::Linux).unwrap_err();
-    assert!(format!("{error:#}").contains("재현할 수 없습니다"), "{error:#}");
+    assert_eq!(workflow::declared_platforms(&parsed).len(), 3);
+    for (platform, expected) in [
+        (Platform::Macos, "Test on macOS"),
+        (Platform::Linux, "Test on Linux"),
+        (Platform::Windows, "Test on Windows"),
+    ] {
+        let stages = workflow::stages_for(&parsed, Some(platform));
+        let names: Vec<&str> = stages["test"].iter().map(|step| step.name.as_str()).collect();
+        assert_eq!(names, [expected], "{platform}");
+        assert_eq!(stages["build"].len(), 1, "{platform} builds once");
+        assert_eq!(stages["setup"].len(), 1, "{platform} checks out once");
+        assert_eq!(stages["smoke"].len(), 1, "{platform} records the skip");
+    }
+    // Without a platform every job is included, which is what validation reads.
+    assert_eq!(workflow::stages(&parsed)["test"].len(), 3);
 }
 
-/// A workflow that names no runner this machine knows places no constraint.
+/// A runner this machine does not recognise constrains nothing, so such a job
+/// is replayed everywhere rather than silently dropped.
 #[test]
-fn an_unfamiliar_runner_does_not_constrain_the_replay() {
+fn an_unfamiliar_runner_runs_on_every_platform() {
+    use build_machine_core::Platform;
     let parsed = load(
         r#"# build-machine: skip test reason=fixture
 # build-machine: skip smoke reason=fixture
@@ -268,7 +300,36 @@ jobs:
 "#,
     )
     .unwrap();
-    for platform in build_machine_core::Platform::ALL {
-        assert!(workflow::check_platform(&parsed, platform).is_ok(), "{platform}");
+    assert!(workflow::declared_platforms(&parsed).is_empty());
+    for platform in Platform::ALL {
+        assert_eq!(workflow::stages_for(&parsed, Some(platform))["build"].len(), 1, "{platform}");
     }
+}
+
+/// A workflow with a job per operating system must satisfy the gates on each
+/// of them. Testing on one and not another would otherwise pass validation
+/// while that platform's rehearsal ran no tests at all.
+#[test]
+fn every_platform_the_workflow_covers_must_satisfy_the_gates() {
+    let error = load(
+        r#"# build-machine: skip smoke reason=fixture
+name: release
+on: workflow_dispatch
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - name: Test on macOS
+        run: cargo test
+      - uses: tauri-apps/tauri-action@v0
+  linux:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: tauri-apps/tauri-action@v0
+"#,
+    )
+    .unwrap_err();
+    let text = format!("{error:#}");
+    assert!(text.contains("linux"), "{text}");
+    assert!(text.contains("test 단계"), "{text}");
 }

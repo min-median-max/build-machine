@@ -39,7 +39,7 @@
   },
   "retention": {
     "maxRunsPerProject": 20,
-    "maxBytes": 21474836480,
+    "maxBytes": 8589934592,
     "days": 30
   },
   "platforms": {

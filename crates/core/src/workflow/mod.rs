@@ -6,7 +6,7 @@ pub mod stage;
 
 pub use adapter::{Adapter, STAGE_ORDER};
 pub use parse::{Job, Step, Workflow};
-pub use stage::{check_gates, stage_counts, stage_of, stages};
+pub use stage::{check_gates, stage_counts, stage_of, stages, stages_for};
 
 use crate::Platform;
 use anyhow::{bail, Context, Result};
@@ -27,30 +27,12 @@ pub fn platform_for_runner(label: &str) -> Option<Platform> {
     }
 }
 
-/// The platforms this workflow was written for.
+/// The platforms this workflow has jobs for.
 ///
-/// An empty set means no job named a runner this machine recognises, which
-/// places no constraint on where the replay runs.
+/// A workflow with a job per operating system is what a three-OS release looks
+/// like. An empty set means no job named a runner this machine recognises.
 pub fn declared_platforms(workflow: &Workflow) -> BTreeSet<Platform> {
     workflow.jobs.iter().filter_map(|job| platform_for_runner(&job.runs_on)).collect()
-}
-
-/// Refuse a replay the workflow was never written to perform.
-///
-/// A workflow that asks for `macos-14` and names an Apple target cannot be
-/// carried out on Linux. Saying so here is the difference between a clear
-/// refusal and a confusing failure deep inside someone else's build.
-pub fn check_platform(workflow: &Workflow, platform: Platform) -> Result<()> {
-    let declared = declared_platforms(workflow);
-    if declared.is_empty() || declared.contains(&platform) {
-        return Ok(());
-    }
-    let names: Vec<&str> = declared.iter().map(|value| value.as_str()).collect();
-    bail!(
-        "이 워크플로는 {} 에서 실행되도록 작성됐어요. {platform}에서는 재현할 수 없습니다. \
-         세 운영체제를 모두 재현하려면 workflow가 특정 플랫폼의 타깃을 고정하지 않아야 해요.",
-        names.join(", ")
-    )
 }
 
 /// Read and validate a workflow file.

@@ -113,7 +113,7 @@ fn run_platform(
     operation: &Operation,
     platform: Platform,
     snapshot: Option<&Snapshot>,
-    stages: &BTreeMap<String, Vec<build_machine_core::workflow::Step>>,
+    workflow: Option<&build_machine_core::workflow::Workflow>,
     state: &Path,
     stamp: &str,
     operation_log: &OperationLog,
@@ -132,7 +132,7 @@ fn run_platform(
             }
         }
     };
-    let result = execute_platform(operation, platform, snapshot, stages, state, &log);
+    let result = execute_platform(operation, platform, snapshot, workflow, state, &log);
     let outcome = match result {
         Ok(mut result) => {
             result.log = platform_log.to_string_lossy().into_owned();
@@ -155,7 +155,7 @@ fn execute_platform(
     operation: &Operation,
     platform: Platform,
     snapshot: Option<&Snapshot>,
-    stages: &BTreeMap<String, Vec<build_machine_core::workflow::Step>>,
+    workflow: Option<&build_machine_core::workflow::Workflow>,
     state: &Path,
     log: &OperationLog,
 ) -> Result<PlatformResult> {
@@ -168,8 +168,12 @@ fn execute_platform(
     {
         transport.invoke_elevated(&["setup-system".to_owned()], log)?;
     }
+    // Each platform receives the jobs its own runner label claims.
+    let stages = workflow
+        .map(|workflow| build_machine_core::workflow::stages_for(workflow, Some(platform)))
+        .unwrap_or_default();
     let request = match snapshot {
-        Some(snapshot) => Some(write_request(operation, platform, snapshot, stages, transport.as_ref(), state)?.1),
+        Some(snapshot) => Some(write_request(operation, platform, snapshot, &stages, transport.as_ref(), state)?.1),
         None => None,
     };
     let arguments = worker_arguments(operation, request.as_deref());
@@ -220,9 +224,9 @@ pub fn execute(operation: &Operation) -> Result<RunReport> {
     log.note(&format!("REPORT {}", report_path.display()));
 
     let prepared = prepare(operation, &state);
-    let mut stages = BTreeMap::new();
+    let mut workflow = None;
     match prepared {
-        Ok((snapshot, replay_stages)) => {
+        Ok((snapshot, replay_workflow)) => {
             if let Some(snapshot) = &snapshot {
                 report.project = Some(snapshot.project.clone());
                 log.note(&format!(
@@ -230,7 +234,7 @@ pub fn execute(operation: &Operation) -> Result<RunReport> {
                     snapshot.revision, snapshot.dirty, snapshot.source_hash
                 ));
             }
-            stages = replay_stages;
+            workflow = replay_workflow;
             report.source = snapshot;
         }
         Err(error) => {
@@ -248,13 +252,13 @@ pub fn execute(operation: &Operation) -> Result<RunReport> {
                 for platform in &operation.platforms {
                     let collected = collected.clone();
                     let snapshot = snapshot.clone();
-                    let stages = &stages;
+                    let workflow = workflow.as_ref();
                     let log = &log;
                     let state = &state;
                     let stamp = &stamp;
                     scope.spawn(move || {
                         let outcome =
-                            run_platform(operation, *platform, snapshot.as_ref(), stages, state, stamp, log);
+                            run_platform(operation, *platform, snapshot.as_ref(), workflow, state, stamp, log);
                         collected.lock().unwrap().push((*platform, outcome));
                     });
                 }
@@ -269,7 +273,7 @@ pub fn execute(operation: &Operation) -> Result<RunReport> {
         } else {
             for platform in &operation.platforms {
                 let outcome =
-                    run_platform(operation, *platform, snapshot.as_ref(), &stages, &state, &stamp, &log);
+                    run_platform(operation, *platform, snapshot.as_ref(), workflow.as_ref(), &state, &stamp, &log);
                 report.results.insert(*platform, outcome.result);
                 publish(&report)?;
             }
@@ -292,23 +296,19 @@ pub fn execute(operation: &Operation) -> Result<RunReport> {
     Ok(report)
 }
 
-type Prepared = (Option<Snapshot>, BTreeMap<String, Vec<build_machine_core::workflow::Step>>);
+/// The workflow a replay is reproducing, kept so each platform can be given
+/// the jobs written for it.
+type Prepared = (Option<Snapshot>, Option<build_machine_core::workflow::Workflow>);
 
 fn prepare(operation: &Operation, state: &Path) -> Result<Prepared> {
     match operation.action {
-        Action::Build | Action::Release => Ok((Some(snapshot::for_build(operation, state)?), BTreeMap::new())),
-        Action::Run => Ok((Some(snapshot::for_run(operation)?), BTreeMap::new())),
+        Action::Build | Action::Release => Ok((Some(snapshot::for_build(operation, state)?), None)),
+        Action::Run => Ok((Some(snapshot::for_run(operation)?), None)),
         Action::Ci => {
             let replay = snapshot::for_replay(operation, state)?;
-            // Refuse a replay the workflow was never written to perform, before
-            // any environment is touched.
-            for platform in &operation.platforms {
-                build_machine_core::workflow::check_platform(&replay.workflow, *platform)?;
-            }
-            let stages = build_machine_core::workflow::stages(&replay.workflow);
-            Ok((Some(replay.snapshot), stages))
+            Ok((Some(replay.snapshot), Some(replay.workflow)))
         }
-        Action::Doctor | Action::Setup => Ok((None, BTreeMap::new())),
+        Action::Doctor | Action::Setup => Ok((None, None)),
     }
 }
 

@@ -53,7 +53,7 @@ build-machine ci run ~/Work/airdata --workflow .github/workflows/release-macos.y
 
 사용자 정의 프로젝트는 `build`에 `--framework custom --command '빌드 명령' --artifact '상대/경로'`를 지정합니다. 사용자 정의 명령은 해당 플랫폼의 셸에서 데스크톱 사용자로, 그 프로젝트의 스냅샷 안에서 실행됩니다.
 
-전송에는 `WindowsBuildMachine`이라는 읽기 전용 Parallels 공유 폴더를 사용합니다. 게스트는 그 공유에서 워커 바이너리와 소스 스냅샷을 읽고, 그쪽으로 되쓰지 않습니다. 맥의 전송 파일·실행 기록·로그는 Git에서 제외한 `.state/`에 있습니다. 각 실행은 `.state/runs/<run>/report.json`에, 그 로그는 `.state/logs/<run>-*.log`에 기록하며 [machine.json](machine.json)의 `retention` 정책이 기간·프로젝트별 개수·전체 용량으로 둘을 함께 제한하고 오래된 실행부터 지웁니다. Windows의 프로젝트와 빌드 기록은 `C:\BuildMachine\projects`에 있습니다. MSVC는 `C:\BuildTools`, 사용자 도구는 `%LOCALAPPDATA%\WindowsBuildMachine`에 설치합니다.
+전송에는 `WindowsBuildMachine`이라는 읽기 전용 Parallels 공유 폴더를 사용합니다. 게스트는 그 공유에서 워커 바이너리와 소스 스냅샷을 읽고, 그쪽으로 되쓰지 않습니다. 맥의 전송 파일·실행 기록·로그는 Git에서 제외한 `.state/`에 있습니다. 각 실행은 `.state/runs/<run>/report.json`에, 그 로그는 `.state/logs/<run>-*.log`에 기록하며 [machine.json](machine.json)의 `retention` 정책이 기간·프로젝트별 개수·전체 용량으로 둘을 함께 제한하고 오래된 실행부터 지웁니다. 같은 용량 상한이 각 워커가 빌드하는 기계에 남기는 빌드 디렉터리도 제한합니다. 용량이 실제로 쌓이는 곳이 거기입니다 — 하나가 의존성 트리 전체입니다. 진행 중인 빌드와 최신 영수증이 가리키는 것은 지우지 않습니다. Windows의 프로젝트와 빌드 기록은 `C:\BuildMachine\projects`에 있습니다. MSVC는 `C:\BuildTools`, 사용자 도구는 `%LOCALAPPDATA%\WindowsBuildMachine`에 설치합니다.
 
 MSVC는 Microsoft가 서비스하는 Visual Studio 2022 채널을 사용하고 필요한 구성 요소를 확인합니다. 다른 도구 버전과 다운로드 체크섬은 `machine.json`에 고정돼 있습니다. 구성 요소 요구사항을 만족하는 기존 MSVC 설치를 자동으로 업그레이드하지 않습니다. 이는 반복 가능한 프로비저닝이며 비트 단위로 재현 가능한 컴파일러 출력을 주장하는 것이 아닙니다.
 

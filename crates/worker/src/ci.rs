@@ -5,6 +5,7 @@
 //! or release publication.
 
 use crate::build::{collect_artifacts, development_bundle, extract_source, project_root, shell_for};
+use anyhow::Context;
 use crate::provision::Tools;
 use crate::stream;
 use anyhow::{bail, Result};
@@ -70,15 +71,16 @@ fn step_environment(base: &[(String, String)], step: &Step) -> (Vec<(String, Str
 
 fn working_directory(source: &Path, step: &Step) -> Result<std::path::PathBuf> {
     let relative = step.working_directory.as_deref().unwrap_or(".");
-    let working = source.join(relative);
-    let resolved = working.canonicalize().unwrap_or(working);
-    if !resolved.starts_with(source) {
-        bail!("Workflow working-directory must be inside the source snapshot.");
-    }
-    Ok(resolved)
+    crate::build::contained_in(source, &source.join(relative))
+        .context("Workflow working-directory must be inside the source snapshot.")
 }
 
-fn tauri_action(step: &Step, source: &Path, request: &WorkRequest, environment: &[(String, String)]) -> Result<Vec<Artifact>> {
+fn tauri_action(
+    step: &Step,
+    source: &Path,
+    request: &WorkRequest,
+    environment: &[(String, String)],
+) -> Result<Vec<Artifact>> {
     let (manager, install, base) = if source.join("pnpm-lock.yaml").is_file() {
         ("pnpm", vec!["install".to_owned(), "--frozen-lockfile".to_owned()], vec!["exec".to_owned(), "tauri".to_owned(), "build".to_owned()])
     } else if source.join("package-lock.json").is_file() {
@@ -90,8 +92,7 @@ fn tauri_action(step: &Step, source: &Path, request: &WorkRequest, environment: 
     let working = working_directory(source, step)?;
     stream::checked(&program, &install, Some(&working), environment)?;
     // The workflow's own `args` is the author's intent. The machine supplies a
-    // target or a bundle only where the workflow named none, because passing
-    // either twice is an error rather than an override.
+    // target or a bundle only where the workflow named none.
     let extra: Vec<String> =
         step.with.get("args").map(|args| args.split_whitespace().map(str::to_owned).collect()).unwrap_or_default();
     let mut arguments = base;
@@ -267,6 +268,7 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         }
     }
 
+    crate::workspace::prune(&root, &directory, &tools.machine.retention)?;
     result.limits.sort();
     result.limits.dedup();
     // The seeded limit is always present, so a replay is never plain `passed`.

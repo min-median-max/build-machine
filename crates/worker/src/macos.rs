@@ -18,6 +18,12 @@ pub fn locate_app(output: &Path) -> Result<(PathBuf, PathBuf)> {
         bail!("Expected exactly one macOS app bundle.");
     }
     let application = applications.remove(0);
+    let executable = bundle_executable(&application)?;
+    Ok((application, executable))
+}
+
+/// The executable an application bundle declares as its own.
+pub fn bundle_executable(application: &Path) -> Result<PathBuf> {
     let plist = application.join("Contents/Info.plist");
     let value: plist::Value = plist::from_file(&plist)
         .with_context(|| format!("Info.plist를 읽지 못했어요: {}", plist.display()))?;
@@ -26,8 +32,7 @@ pub fn locate_app(output: &Path) -> Result<(PathBuf, PathBuf)> {
         .and_then(|dictionary| dictionary.get("CFBundleExecutable"))
         .and_then(|value| value.as_string())
         .context("Info.plist에 CFBundleExecutable이 없어요.")?;
-    let executable = application.join("Contents/MacOS").join(name);
-    Ok((application, executable))
+    Ok(application.join("Contents/MacOS").join(name))
 }
 
 /// A universal application must actually contain both architectures.
