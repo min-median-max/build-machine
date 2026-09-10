@@ -94,6 +94,10 @@ Builds and launches run as the signed-in user, and a machine that has just been 
 
 `setup-system` now ensures it: the desktop user is declared in `machine.json`, autologin is configured if it is not already, and the display manager is restarted only when nobody is signed in. Running it again reports "No change" and "No restart". `doctor` reports the session as a requirement like any other, and building a guest worker no longer needs a session at all — it becomes the user directly, because compiling does not need a desktop.
 
+It also keeps the desktop from blanking or locking. A launch is verified by looking at the screen, and a machine nobody is sitting at would otherwise turn its screen off a few minutes in, making that impossible.
+
+Restarting the Linux guest was then enough: it came back with a session on its own, no one signed in, and `build-machine run ~/Work/airdata --os linux` launched the application. `.state/ubuntu-app.png` shows it rendering its Korean board screen. That is the last of the three that had not been seen.
+
 The parsing this depends on is pinned by tests, including the case that caused the original mistake: the shipped configuration file carries the settings commented out as examples, and reading one of those as configuration is what leaves a machine at the login screen while provisioning reports success.
 
 ### Not exercised
@@ -101,7 +105,6 @@ The parsing this depends on is pinned by tests, including the case that caused t
 - A system-level installation of any package. Each rehearsal opens the package it built; none installs it.
 - The release workflow. It has never run; no runner has built a worker and no application has been assembled from one.
 - Driving a guest from the seeded application directory. Only one directory can hold the named Parallels share, and repointing it would have taken the share away from this checkout.
-- Visible rendering on Ubuntu. The process launch and reuse were verified, but the guest screen was locked, so the window itself was not seen.
 - Provisioning that actually installs something. Every environment already satisfied `machine.json`, so the installation paths — MSVC, WebView2, apt, the managed toolchains — reported "no installation" and did not run.
 
 ## Defect fixes

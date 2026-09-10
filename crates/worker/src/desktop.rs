@@ -74,6 +74,50 @@ pub fn has_session(user: &str, environment: &[(String, String)]) -> bool {
         .unwrap_or(false)
 }
 
+/// Keep the desktop awake and unlocked.
+///
+/// A launch is verified by looking at the screen. A desktop that blanks or
+/// locks itself after a few minutes makes that impossible on a machine nobody
+/// is sitting at, so the settings that would do it are turned off. These are
+/// per-user settings, so they are applied through the user's own session bus.
+fn keep_awake(user: &str, environment: &[(String, String)]) -> Result<()> {
+    let uid = stream::capture("id", &["-u".to_owned(), user.to_owned()], environment)
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default();
+    if uid.is_empty() {
+        return Ok(());
+    }
+    let bus = format!("unix:path=/run/user/{uid}/bus");
+    // Zero means never, which is what a machine that has to be looked at needs.
+    let settings = [
+        ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
+        ("org.gnome.desktop.screensaver", "lock-enabled", "false"),
+        ("org.gnome.desktop.screensaver", "idle-activation-enabled", "false"),
+    ];
+    for (schema, key, value) in settings {
+        let arguments = vec![
+            "-u".to_owned(),
+            user.to_owned(),
+            "--".to_owned(),
+            "env".to_owned(),
+            format!("DBUS_SESSION_BUS_ADDRESS={bus}"),
+            "gsettings".to_owned(),
+            "set".to_owned(),
+            schema.to_owned(),
+            key.to_owned(),
+            value.to_owned(),
+        ];
+        // A machine without these schemas is not a failure; it simply has
+        // nothing that would blank the screen.
+        if stream::capture("runuser", &arguments, environment).is_err() {
+            println!("OK: {schema} is not present on this machine; nothing to turn off.");
+            return Ok(());
+        }
+    }
+    println!("OK: the desktop will not blank or lock, so a launch can be seen.");
+    Ok(())
+}
+
 /// Bring up a session for the declared desktop user, if there is not one.
 ///
 /// Called as root from `setup-system`. Restarting the display manager is only
@@ -98,7 +142,7 @@ pub fn ensure_session(user: &str, environment: &[(String, String)]) -> Result<()
     }
     if has_session(user, environment) {
         println!("OK: {user} is signed in. No restart.");
-        return Ok(());
+        return keep_awake(user, environment);
     }
     println!("No desktop session for {user}; restarting the display manager to start one.");
     stream::checked("systemctl", &["restart".to_owned(), "gdm".to_owned()], None, environment)?;
@@ -106,7 +150,7 @@ pub fn ensure_session(user: &str, environment: &[(String, String)]) -> Result<()
         std::thread::sleep(std::time::Duration::from_secs(1));
         if has_session(user, environment) {
             println!("OK: {user} is signed in.");
-            return Ok(());
+            return keep_awake(user, environment);
         }
     }
     anyhow::bail!("A desktop session for {user} did not start. Sign in on the machine and run setup again.")
