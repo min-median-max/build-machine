@@ -2,7 +2,7 @@
 
 ## Scope and acceptance
 
-The initial desktop application is a macOS Tauri 2 app with a React interface and a Rust command bridge. Version is `0.0.1`. Rust runs the existing `build.py` controller; Python and Windows PowerShell remain the build workers. The application requires this checkout, Python, Git and Parallels. It does not yet provide a self-contained installer for another developer's machine.
+The initial desktop application is a macOS Tauri 2 app with a React interface and a Rust command bridge. Version is `0.0.1`. The controller is a Rust library this application calls in process, and a worker binary runs on each target. The application requires Git and Parallels. It does not yet provide a self-contained installer for another developer's machine.
 
 The app discovers this checkout beside its build output or at `~/Work/build-machine`. Users can choose another controller folder with the native folder picker in Settings. The sidebar contains **Dashboard**, the registered project list with `+` and a bottom **Settings** button. There is no workspace grouping, Environment navigation entry or separate Projects menu. The initial view is Dashboard; later launches restore the selected view. Selecting a registered project directly opens its build settings and launch controls. Settings contains shared environment diagnosis and tool preparation for all projects; projects reuse those installed tools. Builds continue to check/install missing declared requirements through the same maintained worker.
 
@@ -32,9 +32,9 @@ Acceptance: isolated controller tests cover preparation failure and partial repo
 
 ## Development and records
 
-The GUI source lives under `gui/`. `python3 desktop.py dev` starts the frontend development server and Tauri Rust development process together. `python3 desktop.py build --run` installs declared development tools as needed, installs locked GUI dependencies, builds the macOS app and opens it. The built app subsequently runs without entering a Python command, while still requiring Python internally for the controller.
+The GUI source lives under `gui/`. `cargo xtask dev` starts the frontend development server and the Tauri process together. `cargo xtask build --run` stages the worker binaries, builds the macOS app and opens it. The bundle carries the Windows and Ubuntu workers as resources and the macOS worker as a signed sidecar, so a released application needs nothing else installed.
 
-The CLI accepts multiple names after `--os` and an optional `--result-file` for its machine-readable result. Existing single-platform commands remain valid. GUI preferences stay in the Tauri application configuration directory; operation logs and result files stay under the controller's ignored `.state/` directory. The operation log records the run, each platform's outcome and where that platform's command output was written; the command output itself stays in the per-platform log.
+The `build-machine` command accepts multiple names after `--os` and an optional `--result-file` for its machine-readable result. It is a second front end over the same controller library, so both drive identical code. GUI preferences stay in the Tauri application configuration directory; operation logs and result files stay under the controller's ignored `.state/` directory. The operation log records the run, each platform's outcome and where that platform's command output was written; the command output itself stays in the per-platform log.
 
 The initial GUI, Dashboard, explicit project registration, per-project options, shared Settings and persistent environment results are implemented. Native checks and the unresolved Parallels execution failure are recorded in [GUI-VERIFICATION.md](GUI-VERIFICATION.md). Three-OS release acceptance remains incomplete in [verification.md](verification.md).
 

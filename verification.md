@@ -4,6 +4,29 @@
 
 The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment results and known intermittent Parallels execution failure are recorded separately in [GUI-VERIFICATION.md](GUI-VERIFICATION.md).
 
+> **This file records what happened with the Python and PowerShell implementation
+> that version 0.1.0 removed.** It is kept as a record of those runs and is not
+> edited to describe the Rust implementation, which would make it false. What the
+> Rust rewrite has and has not been shown to do is directly below.
+
+## Rust rewrite
+
+The rewrite passes `cargo test --workspace` (40 tests) and `cargo clippy --workspace --all-targets -- -D warnings` on the macOS host, `pnpm --dir gui run build`, and `pnpm --dir gui test` (14 browser tests). The worker compiles cleanly for `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu` and `aarch64-pc-windows-msvc`.
+
+Exercised for real on this Mac:
+
+- `build-machine doctor --os macos` reported `ready: true` against the actual installed toolchain, through the real worker binary.
+- `build-machine ci validate ~/Work/airdata --workflow .github/workflows/release-macos.yml` rejects that workflow for the missing **test** gate, matching the corrected contract: `actions/checkout` no longer stands in for a test step.
+- The operation log a successful run points at contains the run summary and the location of each platform's command output.
+
+**Not exercised. Nothing below has been run and none of it should be read as working:**
+
+- Every Windows and Ubuntu guest path: diagnosis, provisioning, build, launch and workflow replay. All of it is new code reaching a virtual machine that has not been started against it.
+- Windows provisioning in particular. MSVC installation, Authenticode verification, the registry reads and writes, the PATH broadcast and the window checks moved from .NET wrappers to direct Win32 calls, and only an actual Windows ARM64 machine can show whether they behave.
+- The release workflow. It has never run; no runner has built a worker and no application has been assembled from one.
+- `cargo xtask worker --os windows linux`, which builds a guest worker inside its virtual machine.
+- The rebuilt macOS application bundle, its sidecar staging and the dashboard rendering natively.
+
 ## Defect fixes
 
 Eight recorded defects were fixed and each is pinned by a test that fails without the fix. On the macOS host `python3 -m unittest discover -s tests` passes 41 tests, `~/.cargo/bin/cargo test --manifest-path gui/src-tauri/Cargo.toml` passes 16 (the configured Ubuntu doctor test remains ignored), `pnpm --dir gui test` passes 14 browser tests and `pnpm --dir gui run build` passes the TypeScript and Vite build.

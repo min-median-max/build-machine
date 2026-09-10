@@ -1,22 +1,22 @@
+//! The desktop application's view of the controller.
+//!
+//! The controller is a library, so a job runs in this process rather than
+//! through a command line and a result file. There is one definition of every
+//! recorded value and one code path both front ends drive.
+
+use build_machine_controller::oplog::Stream;
+use build_machine_controller::{
+    controller_root as resolve_root, find_controller as locate, matrix, state_directory, Lock, Operation,
+};
+use build_machine_core::config::Machine;
+use build_machine_core::report::{Action, ExecutionMode, RunReport};
+use build_machine_core::request::Framework;
+use build_machine_core::Platform;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::fs;
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
-use crate::preferences::ExecutionMode;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Action { Doctor, Setup, Build, Run }
-
-impl Action {
-    fn name(&self) -> &str {
-        match self { Self::Doctor => "doctor", Self::Setup => "setup", Self::Build => "build", Self::Run => "run" }
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +24,7 @@ pub struct JobRequest {
     pub controller_path: String,
     pub project_path: Option<String>,
     pub platforms: Vec<String>,
-    pub action: Action,
+    pub action: String,
     pub launch: bool,
     #[serde(default)]
     pub workflow: Option<String>,
@@ -33,41 +33,36 @@ pub struct JobRequest {
     #[serde(default)]
     pub ref_name: Option<String>,
     #[serde(default)]
-    pub execution: ExecutionMode,
+    pub execution: String,
 }
 
-fn default_event() -> String { "workflow_dispatch".into() }
+fn default_event() -> String {
+    "workflow_dispatch".into()
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobOutcome {
     pub exit_code: i32,
-    pub result: Option<Value>,
-    pub result_path: String,
+    pub result: Option<RunReport>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct OutputLine { pub stream: String, pub line: String }
+pub struct OutputLine {
+    pub stream: String,
+    pub line: String,
+}
 
 pub fn controller_root(value: &str) -> Result<PathBuf, String> {
-    let root = Path::new(value).canonicalize().map_err(|_| "빌드 도구 폴더를 찾을 수 없어요. 폴더를 다시 선택해주세요.".to_string())?;
-    if !root.join("build.py").is_file() || !root.join("machine.json").is_file() {
-        return Err("선택한 폴더에 build.py와 machine.json이 없어요.".into());
-    }
-    Ok(root)
+    resolve_root(Path::new(value)).map_err(|error| format!("{error:#}"))
 }
 
 pub fn find_controller() -> String {
-    if let Ok(executable) = std::env::current_exe() {
-        for ancestor in executable.ancestors() {
-            if ancestor.join("build.py").is_file() && ancestor.join("machine.json").is_file() {
-                return ancestor.to_string_lossy().into_owned();
-            }
-        }
-    }
-    std::env::var_os("HOME").map(PathBuf::from).map(|home| home.join("Work/build-machine").to_string_lossy().into_owned()).unwrap_or_default()
+    locate().map(|path| path.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// A bundled application does not inherit a login shell's PATH, and `prlctl`
+/// lives in one of these directories.
 fn process(command: &str) -> Command {
     let mut child = Command::new(command);
     let inherited = std::env::var("PATH").unwrap_or_default();
@@ -77,9 +72,9 @@ fn process(command: &str) -> Command {
 
 pub fn overview(value: &str) -> Result<Value, String> {
     let root = controller_root(value)?;
-    let config: Value = serde_json::from_slice(&fs::read(root.join("machine.json")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let machine = Machine::load(&root.join("machine.json")).map_err(|error| format!("{error:#}"))?;
     let response = process("prlctl").args(["list", "-a", "--json"]).output();
-    let (vms, warning) = match response {
+    let (vms, warning): (Vec<Value>, Option<String>) = match response {
         Ok(output) if output.status.success() => match serde_json::from_slice::<Vec<Value>>(&output.stdout) {
             Ok(vms) => (vms, None),
             Err(error) => (vec![], Some(format!("Parallels 응답을 읽지 못했어요: {error}"))),
@@ -88,98 +83,135 @@ pub fn overview(value: &str) -> Result<Value, String> {
         Err(error) => (vec![], Some(format!("Parallels에 연결하지 못했어요: {error}"))),
     };
     let mut environments = Vec::new();
-    for (id, title) in [("windows", "Windows"), ("linux", "Ubuntu"), ("macos", "macOS")] {
-        let profile = &config["platforms"][id];
-        let target = profile["target"].as_str().ok_or_else(|| format!("machine.json에 {id}의 target 설정이 없어요."))?;
-        let vm_name = profile["vm"].as_str();
-        let status = if id == "macos" { "local" } else {
-            vms.iter().find(|vm| vm["name"].as_str() == vm_name).and_then(|vm| vm["status"].as_str()).unwrap_or("unavailable")
+    for (platform, title) in
+        [(Platform::Windows, "Windows"), (Platform::Linux, "Ubuntu"), (Platform::Macos, "macOS")]
+    {
+        let profile = machine.profile(platform).map_err(|error| format!("{error:#}"))?;
+        let status = match &profile.vm {
+            None => "local",
+            Some(name) => vms
+                .iter()
+                .find(|vm| vm["name"].as_str() == Some(name.as_str()))
+                .and_then(|vm| vm["status"].as_str())
+                .unwrap_or("unavailable"),
         };
-        environments.push(json!({"id":id,"title":title,"target":target,"vm":vm_name,"status":status}));
+        environments.push(json!({
+            "id": platform.as_str(), "title": title, "target": profile.target,
+            "vm": profile.vm, "status": status
+        }));
     }
-    Ok(json!({"controllerPath":root,"environments":environments,"toolStatus":tool_status(&root, &config),"warning":warning}))
+    Ok(json!({
+        "controllerPath": root,
+        "environments": environments,
+        "toolStatus": tool_status(&root, &machine),
+        "warning": warning
+    }))
 }
 
-pub fn tool_status(root: &Path, config: &Value) -> Value {
-    let status = fs::read(root.join(".state/tool-status.json")).ok()
-        .and_then(|data| serde_json::from_slice::<Value>(&data).ok());
-    match status {
-        Some(status) if status.get("configuration") == Some(config) => {
-            status.get("results").filter(|results| results.is_object()).cloned().unwrap_or_else(|| json!({}))
-        },
-        _ => json!({}),
+/// The last diagnosis and setup results, dropped when the machine definition
+/// they were measured against changes.
+pub fn tool_status(root: &Path, machine: &Machine) -> Value {
+    let path = state_directory(root).join("tool-status.json");
+    let Some(status) = std::fs::read(path).ok().and_then(|data| serde_json::from_slice::<Value>(&data).ok())
+    else {
+        return json!({});
+    };
+    let configuration = serde_json::to_value(machine).unwrap_or(Value::Null);
+    if status.get("configuration") != Some(&configuration) {
+        return json!({});
     }
+    status.get("results").filter(|results| results.is_object()).cloned().unwrap_or_else(|| json!({}))
 }
 
-pub fn arguments(request: &JobRequest, root: &Path, result: &Path) -> Result<Vec<String>, String> {
-    if request.platforms.is_empty() || request.platforms.iter().any(|os| !["windows", "linux", "macos"].contains(&os.as_str())) {
+fn parse_action(request: &JobRequest) -> Result<Action, String> {
+    // A project with a workflow path replays that workflow instead of building.
+    let replay = request.workflow.as_ref().is_some_and(|path| !path.trim().is_empty());
+    Ok(match request.action.as_str() {
+        "doctor" => Action::Doctor,
+        "setup" => Action::Setup,
+        "run" => Action::Run,
+        "build" if replay => Action::Ci,
+        "build" => Action::Build,
+        other => return Err(format!("알 수 없는 작업이에요: {other}")),
+    })
+}
+
+pub fn build_operation(request: &JobRequest, observer: build_machine_controller::oplog::Observer) -> Result<Operation, String> {
+    let root = controller_root(&request.controller_path)?;
+    let machine = Machine::load(&root.join("machine.json")).map_err(|error| format!("{error:#}"))?;
+    let action = parse_action(request)?;
+    let mut platforms = Vec::new();
+    for name in &request.platforms {
+        platforms.push(name.parse::<Platform>().map_err(|_| "실행할 운영체제를 하나 이상 선택해주세요.".to_string())?);
+    }
+    if platforms.is_empty() {
         return Err("실행할 운영체제를 하나 이상 선택해주세요.".into());
     }
-    let workflow_run = request.action == Action::Build && request.workflow.as_ref().is_some_and(|path| !path.trim().is_empty());
-    let mut args = vec!["-u".to_owned(), root.join("build.py").to_string_lossy().into_owned()];
-    if workflow_run { args.extend(["ci".into(), "run".into()]); } else { args.push(request.action.name().into()); }
-    if matches!(request.action, Action::Build | Action::Run) {
-        let project = request.project_path.as_ref().filter(|path| Path::new(path).is_dir()).ok_or("프로젝트 폴더를 선택해주세요.")?;
-        args.push(project.clone());
-    }
-    args.push("--os".into());
-    args.extend(request.platforms.iter().cloned());
-    args.push("--execution".into());
-    args.push(match request.execution { ExecutionMode::Sequential => "sequential".into(), ExecutionMode::Parallel => "parallel".into() });
-    args.extend(["--result-file".into(), result.to_string_lossy().into_owned()]);
-    if workflow_run {
-        args.extend(["--workflow".into(), request.workflow.clone().unwrap()]);
-        args.extend(["--event".into(), request.event.clone()]);
-        if let Some(reference) = &request.ref_name { args.extend(["--ref".into(), reference.clone()]); }
-    } else if request.launch && matches!(request.action, Action::Build) { args.push("--run".into()); }
-    Ok(args)
+    platforms.sort();
+    platforms.dedup();
+    let project = match action {
+        Action::Doctor | Action::Setup => None,
+        _ => {
+            let path = request
+                .project_path
+                .as_ref()
+                .map(PathBuf::from)
+                .filter(|path| path.is_dir())
+                .ok_or("프로젝트 폴더를 선택해주세요.")?;
+            Some(path)
+        }
+    };
+    Ok(Operation {
+        root,
+        machine,
+        action,
+        platforms,
+        execution: if request.execution == "parallel" { ExecutionMode::Parallel } else { ExecutionMode::Sequential },
+        project,
+        framework: None::<Framework>,
+        command: None,
+        artifact: None,
+        // A replay has no launch step, so the option is not carried into one.
+        launch: request.launch && action == Action::Build,
+        workflow: request.workflow.clone().filter(|path| !path.trim().is_empty()),
+        event: request.event.clone(),
+        reference: request.ref_name.clone().filter(|value| !value.trim().is_empty()),
+        result_file: None,
+        observer: Some(observer),
+    })
 }
 
-fn stream(reader: impl Read, name: &str, emit: &Arc<dyn Fn(OutputLine) + Send + Sync>) {
-    let mut reader = BufReader::new(reader);
-    let mut bytes = Vec::new();
-    loop {
-        bytes.clear();
-        match reader.read_until(b'\n', &mut bytes) {
-            Ok(0) => break,
-            Ok(_) => emit(OutputLine { stream: name.into(), line: String::from_utf8_lossy(&bytes).trim_end_matches(['\r','\n']).into() }),
-            Err(error) => { emit(OutputLine { stream: "stderr".into(), line: format!("로그 읽기 실패: {error}") }); break; }
-        }
-    }
-}
-
-pub fn execute(request: JobRequest, emit: Arc<dyn Fn(OutputLine) + Send + Sync>) -> Result<JobOutcome, String> {
-    let root = controller_root(&request.controller_path)?;
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
-    let result_path = root.join(".state/gui").join(format!("{stamp}-{}.json", std::process::id()));
-    let args = arguments(&request, &root, &result_path)?;
-    let mut child = process("/usr/bin/python3").args(args).current_dir(&root).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("빌드 명령을 시작하지 못했어요: {e}"))?;
-    let stderr = child.stderr.take().ok_or("표준 오류 스트림이 없어요.")?;
-    let stderr_emit = emit.clone();
-    let error_thread = std::thread::spawn(move || stream(stderr, "stderr", &stderr_emit));
-    stream(child.stdout.take().ok_or("출력 스트림이 없어요.")?, "stdout", &emit);
-    let status = child.wait().map_err(|e| e.to_string())?;
-    error_thread.join().map_err(|_| "오류 로그 처리에 실패했어요.")?;
-    let result: Option<Value> = if result_path.exists() {
-        Some(serde_json::from_slice(&fs::read(&result_path).map_err(|e| e.to_string())?).map_err(|e| format!("결과 파일을 읽지 못했어요: {e}"))?)
-    } else if status.success() {
-        return Err(format!("명령은 종료됐지만 결과 파일이 없어서 성공을 확인할 수 없어요: {}", result_path.display()));
-    } else { None };
-    if status.success() {
-        if let Some(report) = &result {
-            if report.get("status").is_some() && (!["success", "passed_with_limits"].contains(&report["status"].as_str().unwrap_or(""))
-                || request.platforms.iter().any(|os| report["results"][os]["success"] != true)) {
-                return Err(format!("명령은 종료됐지만 완료 결과가 확인되지 않았어요: {}", result_path.display()));
-            }
-        }
-    }
-    Ok(JobOutcome { exit_code: status.code().unwrap_or(-1), result, result_path: result_path.to_string_lossy().into_owned() })
+pub fn execute(
+    request: JobRequest,
+    emit: Arc<dyn Fn(OutputLine) + Send + Sync>,
+) -> Result<JobOutcome, String> {
+    let forward = emit.clone();
+    let observer: build_machine_controller::oplog::Observer = Arc::new(move |stream, line| {
+        forward(OutputLine {
+            stream: match stream {
+                Stream::Stderr => "stderr".to_owned(),
+                Stream::Stdout => "stdout".to_owned(),
+            },
+            line: line.to_owned(),
+        });
+    });
+    let operation = build_operation(&request, observer)?;
+    let state = state_directory(&operation.root);
+    let _lock = Lock::acquire(&state).map_err(|error| format!("{error:#}"))?;
+    let report = matrix::execute(&operation).map_err(|error| format!("{error:#}"))?;
+    matrix::record_tool_status(&operation.root, &operation.machine, &report)
+        .map_err(|error| format!("{error:#}"))?;
+    let exit_code = if report.succeeded() { 0 } else { 1 };
+    Ok(JobOutcome { exit_code, result: Some(report) })
 }
 
 pub fn open_logs(value: &str) -> Result<(), String> {
-    let logs = controller_root(value)?.join(".state/logs");
-    fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
-    let status = process("/usr/bin/open").arg(logs).status().map_err(|e| e.to_string())?;
-    if !status.success() { return Err("로그 폴더를 열지 못했어요.".into()); }
-    Ok(())
+    let logs = state_directory(&controller_root(value)?).join("logs");
+    std::fs::create_dir_all(&logs).map_err(|error| error.to_string())?;
+    let status = process("/usr/bin/open").arg(logs).status().map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("로그 폴더를 열지 못했어요.".into())
+    }
 }

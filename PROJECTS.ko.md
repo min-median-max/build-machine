@@ -16,7 +16,7 @@
 GUI는 현재 자동 감지를 사용합니다. 사용자 지정 명령과 산출물 경로는 CLI에서 지정합니다.
 
 ```sh
-python3 build.py build /path/to/project --os linux \
+build-machine build /path/to/project --os linux \
   --framework custom --command './scripts/build-linux.sh' \
   --artifact 'build/bin/example'
 ```

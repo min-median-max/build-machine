@@ -1,0 +1,142 @@
+# Build the worker for each operating system on that operating system, then
+# assemble the macOS application around them.
+#
+# Each runner builds its own target natively, so nothing is cross-linked: the
+# Windows linker only exists on Windows. This is what lets the shipped guest
+# workers need no toolchain, no Python and no PowerShell on the machine that
+# runs them.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  worker:
+    name: worker (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            binary: build-machine-worker.exe
+            staged: build-machine-worker-windows.exe
+          - platform: linux
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: build-machine-worker
+            staged: build-machine-worker-linux
+          - platform: macos
+            runner: macos-14
+            target: universal-apple-darwin
+            binary: build-machine-worker
+            staged: build-machine-worker-macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+
+      # A universal macOS worker has to contain both architectures, so it is
+      # built per architecture and joined.
+      - name: Build the macOS universal worker
+        if: matrix.platform == 'macos'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked -p build-machine-worker --target aarch64-apple-darwin
+          cargo build --release --locked -p build-machine-worker --target x86_64-apple-darwin
+          mkdir -p staged
+          lipo -create -output "staged/${{ matrix.staged }}" \
+            "target/aarch64-apple-darwin/release/${{ matrix.binary }}" \
+            "target/x86_64-apple-darwin/release/${{ matrix.binary }}"
+          lipo -archs "staged/${{ matrix.staged }}"
+
+      - name: Build the worker
+        if: matrix.platform != 'macos'
+        shell: bash
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked -p build-machine-worker --target ${{ matrix.target }}
+          mkdir -p staged
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "staged/${{ matrix.staged }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: worker-${{ matrix.platform }}
+          path: staged/${{ matrix.staged }}
+          if-no-files-found: error
+
+  application:
+    name: macOS application
+    needs: worker
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          rustup target add aarch64-apple-darwin
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+
+      # Guest workers travel to a virtual machine, so they are data the bundle
+      # carries. The macOS worker runs on this machine, so it is a sidecar and
+      # is named with its target triple for the bundler to stage and sign.
+      - name: Stage the workers
+        run: |
+          mkdir -p workers gui/src-tauri/binaries
+          find downloaded -type f -exec cp {} workers/ \;
+          chmod +x workers/*
+          cp workers/build-machine-worker-macos \
+             gui/src-tauri/binaries/build-machine-worker-aarch64-apple-darwin
+          ls -l workers gui/src-tauri/binaries
+
+      - name: Build the application
+        run: |
+          pnpm --dir gui install --frozen-lockfile
+          pnpm --dir gui exec tauri build --ci --no-sign --bundles app -- --locked
+
+      - name: Package the application
+        run: |
+          cd target/release/bundle/macos
+          zip -ry "$GITHUB_WORKSPACE/Build-Machine-macos.zip" "Build Machine.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-machine-macos
+          path: Build-Machine-macos.zip
+          if-no-files-found: error
+
+      # The release is unsigned and unnotarized. That limit is recorded rather
+      # than hidden: a downloader has to clear Gatekeeper themselves.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Build-Machine-macos.zip
+          body: |
+            Unsigned and unnotarized macOS application.
+            Bundled workers: Windows ARM64, Ubuntu ARM64, macOS universal.

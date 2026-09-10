@@ -4,6 +4,28 @@
 
 데스크톱 GUI, Windows Node.js 22.23.2 준비, 영구 환경 결과와 아직 해결되지 않은 Parallels 실행 오류는 [GUI-VERIFICATION.ko.md](GUI-VERIFICATION.ko.md)에 따로 기록합니다.
 
+> **이 파일은 0.1.0이 제거한 Python·PowerShell 구현에서 실제로 일어난 일의 기록입니다.**
+> 그 실행들의 기록으로 남겨 두며, Rust 구현을 설명하도록 고쳐 쓰지 않습니다. 그렇게 하면
+> 기록이 거짓이 됩니다. Rust 재작성이 무엇을 보였고 무엇을 보이지 않았는지는 바로 아래에 있습니다.
+
+## Rust 재작성
+
+재작성은 macOS 호스트에서 `cargo test --workspace`(40건)와 `cargo clippy --workspace --all-targets -- -D warnings`, `pnpm --dir gui run build`, `pnpm --dir gui test`(브라우저 14건)를 통과합니다. 워커는 `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu`, `aarch64-pc-windows-msvc` 세 타깃에서 경고 없이 컴파일됩니다.
+
+이 맥에서 실제로 수행한 것:
+
+- `build-machine doctor --os macos`가 실제 설치된 툴체인에 대해 실제 워커 바이너리를 거쳐 `ready: true`를 보고했습니다.
+- `build-machine ci validate ~/Work/airdata --workflow .github/workflows/release-macos.yml`이 **test** 게이트 누락으로 거부합니다. 바로잡은 계약과 일치합니다 — `actions/checkout`은 더 이상 테스트 단계를 대신하지 않습니다.
+- 성공한 실행이 가리키는 작업 로그에 실행 요약과 플랫폼별 명령 출력 위치가 들어 있습니다.
+
+**수행하지 않은 것. 아래 어느 것도 실행된 적이 없으며 동작한다고 읽어서는 안 됩니다:**
+
+- Windows와 Ubuntu 게스트 경로 전부: 진단, 프로비저닝, 빌드, 실행, 워크플로 재현. 전부 새 코드이고, 그것을 상대로 VM을 띄운 적이 없습니다.
+- 특히 Windows 프로비저닝. MSVC 설치, Authenticode 검증, 레지스트리 읽기·쓰기, PATH 브로드캐스트, 창 확인이 .NET 래퍼에서 Win32 직접 호출로 옮겨졌고, 실제 Windows ARM64 기계만이 그 동작을 보여줄 수 있습니다.
+- 릴리즈 워크플로. 한 번도 실행되지 않았습니다. 어떤 러너도 워커를 빌드한 적이 없고, 그것으로 앱을 조립한 적도 없습니다.
+- 게스트 VM 안에서 워커를 빌드하는 `cargo xtask worker --os windows linux`.
+- 다시 빌드한 macOS 앱 번들, 사이드카 배치, 네이티브 대시보드 렌더링.
+
 ## 결함 수정
 
 기록된 결함 8건을 고쳤고, 각각은 수정 없이는 실패하는 테스트로 고정했습니다. macOS 호스트에서 `python3 -m unittest discover -s tests`가 41건, `~/.cargo/bin/cargo test --manifest-path gui/src-tauri/Cargo.toml`이 16건(설정된 Ubuntu doctor 테스트는 계속 제외), `pnpm --dir gui test`가 브라우저 테스트 14건, `pnpm --dir gui run build`가 TypeScript·Vite 빌드를 통과합니다.

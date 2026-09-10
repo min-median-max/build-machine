@@ -1,0 +1,16 @@
+[package]
+name = "build-machine-xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+clap.workspace = true
+build-machine-core.workspace = true
+build-machine-controller.workspace = true

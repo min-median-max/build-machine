@@ -61,7 +61,7 @@ export async function desktopMock(page: Page, options: { missingController?: boo
             history.unshift({ id: `build-${history.length}`, project: args.request.projectPath, status: fail ? 'failure' : 'success', action: args.request.workflow ? 'ci' : 'build', platforms: args.request.platforms, results, recordedAt: Date.now(), finishedAt: '2026-09-09T11:00:00Z', log: '/fixtures/build.log', error: null });
             sessionStorage.setItem('fixture-build-history', JSON.stringify(history));
           }
-          return { exitCode: fail ? 1 : 0, resultPath: '/fixtures/result.json', result: w.noReport ? null : { log: '/fixtures/build.log', results } };
+          return { exitCode: fail ? 1 : 0, result: w.noReport ? null : { runId: 'fixture', action: args.request.workflow ? 'ci' : 'build', project: args.request.projectPath, platforms: args.request.platforms, executionMode: args.request.execution, status: fail ? 'failure' : 'success', startedAt: '2026-09-09T11:00:00Z', finishedAt: '2026-09-09T11:00:00Z', log: '/fixtures/build.log', results } };
         }
         throw new Error(`Unexpected desktop call: ${command}`);
       },

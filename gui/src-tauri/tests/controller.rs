@@ -1,107 +1,151 @@
-use build_machine_desktop::controller::{self, Action, JobRequest, OutputLine};
-use build_machine_desktop::preferences::ExecutionMode;
-use std::{fs, sync::{Arc, Mutex}};
+use build_machine_desktop::controller::{self, JobRequest};
+use build_machine_core::report::Action;
+use build_machine_core::Platform;
+use std::path::Path;
+use std::sync::Arc;
 
-fn request(root: &std::path::Path) -> JobRequest {
-    JobRequest { controller_path: root.to_string_lossy().into(), project_path: None,
-        platforms: vec!["linux".into()], action: Action::Doctor, launch: false,
-        workflow: None, event: "workflow_dispatch".into(), ref_name: None, execution: ExecutionMode::Sequential }
+/// A machine definition with only what the controller reads.
+fn machine_json(node_version: &str) -> String {
+    format!(
+        r#"{{
+  "vm": "Windows 11", "share": "WindowsBuildMachine", "windowsRoot": "C:\\BuildMachine",
+  "architecture": "arm64",
+  "node": {{"version": "{node_version}", "url": "https://example.invalid/node.zip", "sha256": "00"}},
+  "pnpm": {{"version": "11.24.0"}},
+  "rust": {{"version": "1.98.1", "host": "aarch64-pc-windows-msvc",
+            "installerUrl": "https://example.invalid/rustup", "installerSha256": "00"}},
+  "go": {{"version": "1.27.1", "url": "https://example.invalid/go.zip", "sha256": "00"}},
+  "git": {{"version": "2.55.0", "url": "https://example.invalid/git.exe", "sha256": "00"}},
+  "msvc": {{"installPath": "C:\\BuildTools", "installerUrl": "https://example.invalid/vs.exe", "components": []}},
+  "platforms": {{
+    "windows": {{"vm": "Windows 11", "runner": "windows-11-arm", "target": "aarch64-pc-windows-msvc", "bundle": "nsis"}},
+    "linux": {{"vm": "Ubuntu", "runner": "ubuntu-26.04-arm", "target": "aarch64-unknown-linux-gnu", "bundle": "deb"}},
+    "macos": {{"runner": "macos-14", "target": "universal-apple-darwin", "bundle": "dmg"}}
+  }}
+}}"#
+    )
 }
 
-#[test]
-fn child_failure_and_both_log_streams_reach_the_caller() {
+fn controller_directory(node_version: &str) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
-    fs::write(directory.path().join("machine.json"), "{}").unwrap();
-    fs::write(directory.path().join("build.py"), r#"
-import json, pathlib, sys
-result = pathlib.Path(sys.argv[sys.argv.index('--result-file') + 1])
-result.parent.mkdir(parents=True, exist_ok=True)
-result.write_text(json.dumps({'results': {'linux': {'success': False, 'error': 'missing test tool'}}, 'argv': sys.argv}))
-print('PLATFORM: linux', flush=True)
-print('missing test tool', file=sys.stderr, flush=True)
-sys.exit(7)
-"#).unwrap();
-    let lines = Arc::new(Mutex::new(Vec::<OutputLine>::new()));
-    let captured = lines.clone();
-    let result = controller::execute(request(directory.path()), Arc::new(move |line| captured.lock().unwrap().push(line))).unwrap();
-    assert_eq!(result.exit_code, 7);
-    assert_eq!(result.result.unwrap()["results"]["linux"]["success"], false);
-    let output = lines.lock().unwrap();
-    assert!(output.iter().any(|line| line.stream == "stdout" && line.line == "PLATFORM: linux"));
-    assert!(output.iter().any(|line| line.stream == "stderr" && line.line == "missing test tool"));
+    std::fs::write(directory.path().join("machine.json"), machine_json(node_version)).unwrap();
+    directory
+}
+
+fn request(root: &Path, project: Option<&Path>) -> JobRequest {
+    JobRequest {
+        controller_path: root.to_string_lossy().into_owned(),
+        project_path: project.map(|path| path.to_string_lossy().into_owned()),
+        platforms: vec!["linux".to_owned()],
+        action: "build".to_owned(),
+        launch: true,
+        workflow: None,
+        event: "workflow_dispatch".to_owned(),
+        ref_name: None,
+        execution: "sequential".to_owned(),
+    }
+}
+
+fn observer() -> build_machine_controller::oplog::Observer {
+    Arc::new(|_, _| {})
 }
 
 #[test]
-fn project_paths_are_passed_as_one_argument_without_shell_execution() {
+fn a_folder_without_a_machine_definition_is_not_a_controller() {
     let directory = tempfile::tempdir().unwrap();
-    fs::write(directory.path().join("machine.json"), "{}").unwrap();
-    fs::write(directory.path().join("build.py"), r#"
-import json, pathlib, sys
-result = pathlib.Path(sys.argv[sys.argv.index('--result-file') + 1])
-result.parent.mkdir(parents=True, exist_ok=True)
-result.write_text(json.dumps({'argv': sys.argv, 'results': {}}))
-"#).unwrap();
-    let project = directory.path().join("project with ' spaces; touch unexpected");
-    fs::create_dir(&project).unwrap();
-    let mut input = request(directory.path());
-    input.action = Action::Build;
-    input.project_path = Some(project.to_string_lossy().into());
-    input.platforms = vec!["linux".into(), "macos".into()];
-    input.launch = true;
-    let result = controller::execute(input, Arc::new(|_| {})).unwrap();
-    let args = result.result.unwrap()["argv"].as_array().unwrap().clone();
-    assert_eq!(args[2], project.to_string_lossy().as_ref());
-    assert!(args.iter().any(|argument| argument == "--run"));
-    assert!(!directory.path().join("unexpected").exists());
+    let error = controller::controller_root(directory.path().to_str().unwrap()).unwrap_err();
+    assert!(error.contains("machine.json"), "{error}");
 }
 
 #[test]
-fn tool_results_reload_from_disk_and_do_not_apply_to_changed_configuration() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::create_dir(directory.path().join(".state")).unwrap();
-    let config = serde_json::json!({"node":{"version":"22.test"}});
-    let results = serde_json::json!({"linux":{"success":true,"action":"setup","finishedAt":"2026-09-09T11:00:00Z"}});
-    fs::write(directory.path().join(".state/tool-status.json"), serde_json::to_vec(&serde_json::json!({"configuration":config,"results":results})).unwrap()).unwrap();
-    assert_eq!(controller::tool_status(directory.path(), &config), results);
-    assert_eq!(controller::tool_status(directory.path(), &serde_json::json!({"node":{"version":"24.test"}})), serde_json::json!({}));
+fn an_empty_or_unknown_environment_selection_is_rejected_before_work_starts() {
+    let directory = controller_directory("22.23.2");
+    let project = tempfile::tempdir().unwrap();
+
+    let mut input = request(directory.path(), Some(project.path()));
+    input.platforms = vec![];
+    assert!(controller::build_operation(&input, observer()).is_err());
+
+    let mut input = request(directory.path(), Some(project.path()));
+    input.platforms = vec!["solaris".to_owned()];
+    assert!(controller::build_operation(&input, observer()).is_err());
 }
 
 #[test]
-fn zero_exit_without_a_result_file_is_not_success() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(directory.path().join("machine.json"), "{}").unwrap();
-    fs::write(directory.path().join("build.py"), "print('worker ended without a report')").unwrap();
-    let result = controller::execute(request(directory.path()), Arc::new(|_| {}));
-    assert!(result.unwrap_err().contains("결과 파일"));
+fn a_build_needs_a_project_folder_but_an_environment_action_does_not() {
+    let directory = controller_directory("22.23.2");
+
+    let mut input = request(directory.path(), None);
+    assert!(controller::build_operation(&input, observer()).is_err());
+
+    input.action = "doctor".to_owned();
+    let operation = controller::build_operation(&input, observer()).unwrap();
+    assert_eq!(operation.action, Action::Doctor);
+    assert!(operation.project.is_none());
+}
+
+/// A workflow path turns the build button into a workflow replay, and a replay
+/// has no launch step.
+#[test]
+fn a_workflow_path_makes_the_build_a_replay_without_a_launch() {
+    let directory = controller_directory("22.23.2");
+    let project = tempfile::tempdir().unwrap();
+
+    let plain = controller::build_operation(&request(directory.path(), Some(project.path())), observer()).unwrap();
+    assert_eq!(plain.action, Action::Build);
+    assert!(plain.launch);
+
+    let mut input = request(directory.path(), Some(project.path()));
+    input.workflow = Some(".github/workflows/release.yml".to_owned());
+    input.ref_name = Some("v0.1.0".to_owned());
+    let replay = controller::build_operation(&input, observer()).unwrap();
+    assert_eq!(replay.action, Action::Ci);
+    assert!(!replay.launch, "a replay must not carry the launch option");
+    assert_eq!(replay.reference.as_deref(), Some("v0.1.0"));
+}
+
+/// A project path is carried as one value, never through a shell, so a folder
+/// name that looks like a command cannot become one.
+#[test]
+fn a_project_path_is_never_interpreted_as_a_command() {
+    let directory = controller_directory("22.23.2");
+    let parent = tempfile::tempdir().unwrap();
+    let project = parent.path().join("project with ' spaces; touch unexpected");
+    std::fs::create_dir(&project).unwrap();
+    let operation =
+        controller::build_operation(&request(directory.path(), Some(&project)), observer()).unwrap();
+    assert_eq!(operation.project.as_deref(), Some(project.as_path()));
+    assert!(!parent.path().join("unexpected").exists());
 }
 
 #[test]
-fn invalid_platform_is_rejected_before_a_child_starts() {
-    let mut input = request(std::path::Path::new("/unused"));
-    input.platforms = vec!["linux; touch unexpected".into()];
-    assert!(controller::arguments(&input, std::path::Path::new("/unused"), std::path::Path::new("/unused/result.json")).is_err());
+fn environment_selections_are_ordered_and_deduplicated() {
+    let directory = controller_directory("22.23.2");
+    let project = tempfile::tempdir().unwrap();
+    let mut input = request(directory.path(), Some(project.path()));
+    input.platforms = vec!["macos".to_owned(), "windows".to_owned(), "macos".to_owned()];
+    let operation = controller::build_operation(&input, observer()).unwrap();
+    assert_eq!(operation.platforms, vec![Platform::Windows, Platform::Macos]);
 }
 
+/// Tool results describe the machine definition they were measured against.
 #[test]
-fn zero_exit_with_only_a_partial_report_is_not_success() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(directory.path().join("machine.json"), "{}").unwrap();
-    fs::write(directory.path().join("build.py"), r#"
-import json, pathlib, sys
-result = pathlib.Path(sys.argv[sys.argv.index('--result-file') + 1])
-result.parent.mkdir(parents=True, exist_ok=True)
-result.write_text(json.dumps({'status': 'running', 'results': {'linux': {'success': True}}}))
-"#).unwrap();
-    let result = controller::execute(request(directory.path()), Arc::new(|_| {}));
-    assert!(result.unwrap_err().contains("완료 결과"));
-}
+fn tool_results_reload_from_disk_and_do_not_apply_to_a_changed_definition() {
+    let directory = controller_directory("22.23.2");
+    let root = directory.path();
+    let machine =
+        build_machine_core::config::Machine::load(&root.join("machine.json")).unwrap();
+    let configuration = serde_json::to_value(&machine).unwrap();
+    let results = serde_json::json!({"linux": {"success": true, "status": "passed"}});
+    std::fs::create_dir_all(root.join(".state")).unwrap();
+    std::fs::write(
+        root.join(".state/tool-status.json"),
+        serde_json::json!({"configuration": configuration, "results": results}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(controller::tool_status(root, &machine), results);
 
-#[test]
-#[ignore = "Requires the configured running Ubuntu Parallels VM; performs read-only tool diagnosis"]
-fn real_ubuntu_doctor() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
-    let result = controller::execute(request(root), Arc::new(|line| println!("{}", line.line))).unwrap();
-    assert_eq!(result.exit_code, 0);
-    assert_eq!(result.result.unwrap()["results"]["linux"]["success"], true);
-    println!("GUI bridge result: {}", result.result_path);
+    let changed = controller_directory("24.0.0");
+    let other = build_machine_core::config::Machine::load(&changed.path().join("machine.json")).unwrap();
+    assert_eq!(controller::tool_status(root, &other), serde_json::json!({}));
 }

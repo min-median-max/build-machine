@@ -5,11 +5,9 @@ use std::{fs, path::Path, process::Command};
 #[serde(rename_all = "lowercase")]
 pub enum Page { Dashboard, Environment, Projects }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ExecutionMode { Sequential, Parallel }
-
-impl Default for ExecutionMode { fn default() -> Self { Self::Sequential } }
+pub enum ExecutionMode { #[default] Sequential, Parallel }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

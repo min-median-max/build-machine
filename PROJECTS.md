@@ -9,19 +9,19 @@ These are the build machine's current project requirements. A project is registe
 | Project | Required files and behavior | Current coverage |
 | --- | --- | --- |
 | Tauri 2 | `src-tauri/tauri.conf.json`, `src-tauri/Cargo.lock`, a root `pnpm-lock.yaml` or `package-lock.json`, and the project Tauri CLI dependency. The configured frontend build must work without prompts. | Windows ARM64 executable and Ubuntu ARM64 executable/DEB exercised with AIRDATA. The macOS universal worker is implemented but AIRDATA acceptance is pending. |
-| Wails 2 | Root `wails.json` for detection and a versioned `github.com/wailsapp/wails/v2` dependency in `go.mod`. The project owns its frontend build steps. | Windows recipe installs the declared Wails CLI and builds `windows/arm64`; not yet exercised. Linux/macOS automatic recipes are absent. |
+| Wails 2 | Root `wails.json` for detection. | No automatic recipe. Supply an explicit command through the custom recipe. |
 | Wails 3 beta | No automatic recipe or detection yet. | Requires explicit project commands through the CLI. Not verified. |
 | Other layouts | An explicit build command and executable path relative to the source snapshot. | CLI custom recipe exists. Not yet exercised with a real project. Custom macOS app launch is not implemented. |
 
 The GUI currently uses automatic detection. Custom commands and artifact paths are CLI options:
 
 ```sh
-python3 build.py build /path/to/project --os linux \
+build-machine build /path/to/project --os linux \
   --framework custom --command './scripts/build-linux.sh' \
   --artifact 'build/bin/example'
 ```
 
-Custom commands run in `cmd.exe` on Windows and `/bin/sh` on Linux/macOS. Supply a separate platform command when those shells or output paths differ.
+Custom commands run in `cmd.exe /d /s /c` on Windows and `/bin/sh -eu -c` on Linux/macOS. Supply a separate platform command when those shells or output paths differ.
 
 ## Conditions shared by projects
 

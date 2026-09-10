@@ -1,9 +1,9 @@
 .state/
-__pycache__/
-*.pyc
 gui/node_modules/
 gui/dist/
-gui/src-tauri/target/
+/target/
 gui/src-tauri/gen/
 gui/test-results/
 gui/playwright-report/
+workers/
+gui/src-tauri/binaries/
