@@ -22,7 +22,7 @@ It is one Rust workspace. The controller runs on this Mac; a worker binary runs 
 
 ## Commands
 
-The [Tauri 2 desktop app](GUI.md) opens with a dashboard of registered projects, their latest recorded build results and recent build logs. Use `+` to register a Git folder, then select its entry to configure build targets, build and launch. Each project retains its own options. The bottom **Settings** button opens Windows/Ubuntu/macOS diagnosis and automatic tool setup shared by all projects. [Project build requirements](PROJECTS.md) describe the supported layouts and remaining framework coverage.
+The [Tauri 2 desktop app](GUI.md) opens with a dashboard of registered projects, their latest recorded build results and recent build logs. Use `+` to register a Git folder, then select its entry to configure build targets, build and launch. Each project retains its own options. The bottom **Settings** button opens Windows/Ubuntu/macOS diagnosis and automatic tool setup shared by all projects. [Adopting the build machine](ADOPTING.md) is what to change in your own repository; [project build requirements](PROJECTS.md) describe the supported layouts and remaining framework coverage.
 
 Registration and GUI settings live in `~/Library/Application Support/local.buildmachine.desktop/preferences.json`. Use **Settings → Open settings folder** to inspect that file.
 

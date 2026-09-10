@@ -185,3 +185,90 @@ jobs:
     .unwrap_err();
     assert!(format!("{error:#}").contains("순환"), "{error:#}");
 }
+
+/// The controller writes the stages into a request document and the worker
+/// reads them back. An adapter that does not survive that trip is read as a
+/// shell step, and the run fails on a command that was never there.
+#[test]
+fn every_adapter_survives_the_request_document() {
+    let parsed = load(
+        r#"# build-machine: skip test reason=fixture
+# build-machine: skip smoke reason=fixture
+name: release
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - run: echo compile
+      - uses: tauri-apps/tauri-action@v0
+      - uses: actions/upload-artifact@v4
+      - uses: softprops/action-gh-release@v2
+"#,
+    )
+    .unwrap();
+    let stages = workflow::stages(&parsed);
+    let document = serde_json::to_string(&stages).unwrap();
+    let restored: std::collections::BTreeMap<String, Vec<workflow::Step>> =
+        serde_json::from_str(&document).unwrap();
+    assert_eq!(restored.len(), stages.len());
+    for (stage, steps) in &stages {
+        let read_back = &restored[stage];
+        assert_eq!(read_back.len(), steps.len(), "{stage}");
+        for (before, after) in steps.iter().zip(read_back) {
+            assert_eq!(after.adapter, before.adapter, "{stage} step {}", before.index);
+            assert_eq!(after.run, before.run, "{stage} step {}", before.index);
+            assert_eq!(after.reason, before.reason, "{stage} step {}", before.index);
+        }
+    }
+    // The one adapter that is not a shell step must not read back as one.
+    assert!(restored["setup"].iter().all(|step| step.adapter != workflow::Adapter::Run));
+}
+
+/// A workflow written for one runner cannot be carried out on another. Saying
+/// so before anything starts beats failing inside someone else's build.
+#[test]
+fn a_replay_is_refused_on_a_platform_the_workflow_was_not_written_for() {
+    let parsed = load(
+        r#"# build-machine: skip test reason=fixture
+# build-machine: skip smoke reason=fixture
+name: release
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: tauri-apps/tauri-action@v0
+"#,
+    )
+    .unwrap();
+    assert!(workflow::check_platform(&parsed, build_machine_core::Platform::Macos).is_ok());
+    let error = workflow::check_platform(&parsed, build_machine_core::Platform::Linux).unwrap_err();
+    assert!(format!("{error:#}").contains("재현할 수 없습니다"), "{error:#}");
+}
+
+/// A workflow that names no runner this machine knows places no constraint.
+#[test]
+fn an_unfamiliar_runner_does_not_constrain_the_replay() {
+    let parsed = load(
+        r#"# build-machine: skip test reason=fixture
+# build-machine: skip smoke reason=fixture
+name: release
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - uses: tauri-apps/tauri-action@v0
+"#,
+    )
+    .unwrap();
+    for platform in build_machine_core::Platform::ALL {
+        assert!(workflow::check_platform(&parsed, platform).is_ok(), "{platform}");
+    }
+}

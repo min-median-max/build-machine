@@ -15,9 +15,7 @@ use std::collections::BTreeMap;
 pub struct Step {
     pub index: u32,
     pub name: String,
-    #[serde(skip)]
     pub adapter: Adapter,
-    pub adapter_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,6 +40,9 @@ pub struct Step {
 #[derive(Clone, Debug)]
 pub struct Job {
     pub id: String,
+    /// The runner the workflow asks GitHub for. A replay has to run somewhere
+    /// that can do what this job was written for.
+    pub runs_on: String,
     pub needs: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
@@ -152,7 +153,6 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
             index,
             name,
             adapter,
-            adapter_name: adapter.as_str().to_owned(),
             action,
             action_ref,
             run,
@@ -219,9 +219,9 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         if as_map(value).is_none() {
             bail!("job {id}가 객체가 아니에요.");
         }
-        if get(value, "runs-on").is_none() {
+        let Some(runs_on) = text(get(value, "runs-on")) else {
             bail!("job {id}에 runs-on이 없어요.");
-        }
+        };
         for unsupported in ["container", "services", "uses", "strategy"] {
             if get(value, unsupported).is_some() {
                 bail!("job {id}의 container/services/reusable/matrix는 아직 지원하지 않아요.");
@@ -235,7 +235,7 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         };
         let env = string_map(get(value, "env"));
         let steps = parse_steps(&id, &env, get(value, "steps"))?;
-        jobs.push(Job { id, needs, env, steps });
+        jobs.push(Job { id, runs_on, needs, env, steps });
     }
     Ok(Workflow {
         path: path.to_owned(),

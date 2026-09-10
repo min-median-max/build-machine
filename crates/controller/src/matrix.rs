@@ -300,6 +300,11 @@ fn prepare(operation: &Operation, state: &Path) -> Result<Prepared> {
         Action::Run => Ok((Some(snapshot::for_run(operation)?), BTreeMap::new())),
         Action::Ci => {
             let replay = snapshot::for_replay(operation, state)?;
+            // Refuse a replay the workflow was never written to perform, before
+            // any environment is touched.
+            for platform in &operation.platforms {
+                build_machine_core::workflow::check_platform(&replay.workflow, *platform)?;
+            }
             let stages = build_machine_core::workflow::stages(&replay.workflow);
             Ok((Some(replay.snapshot), stages))
         }

@@ -48,9 +48,29 @@ Two defects were found and fixed here: the bundled payload was shipped but never
 
 Fifteen run records written by the removed Python implementation were deleted. The current reader cannot parse them and reported them as unreadable on every refresh; there is no compatibility path for them, and `verification.md` is where those runs are recorded.
 
+### Workflow replay
+
+`ADOPTING.md` was written as the guide a project follows to qualify, and AIRDATA was the first project taken through it. Its release workflow carried 38 Rust tests it never ran and had no smoke step, so validation refused it. Adding a test step that runs the tests the repository already had, and a recorded reason for the smoke stage a hosted runner cannot perform, satisfied the contract.
+
+`build-machine ci run ~/Work/airdata --workflow .github/workflows/release-macos.yml --os macos` then completed as `passed_with_limits`:
+
+- `setup` passed with limits — checkout, pnpm, Node.js, Rust and cache through local adapters, `pnpm install --frozen-lockfile` executed, and the signing step skipped because its condition depends on a secret.
+- `test` passed — 38 Rust tests and the frontend typecheck, run inside the snapshot.
+- `build` passed — `tauri-apps/tauri-action` produced `data_0.1.0_universal.dmg`, recorded with its SHA-256 and size.
+- `smoke` passed with limits, carrying the reason from the workflow comment.
+- `signing: unverified`, and the limits record that nothing was signed, notarized or uploaded.
+
+Two defects were found and fixed by this run. The `adapter` field was marked `#[serde(skip)]`, so every step arrived at the worker as a shell step and the first one failed on a command that was never there; it is serialized now, and a test asserts every adapter survives the request document. And the machine appended its own `--target` to a workflow whose own `args` already named one; the workflow's arguments win now.
+
+Replaying the same workflow on Ubuntu found a test that fails only there: it read `items[0]` without waiting for the post to be acknowledged, and passed on macOS purely on speed. The same file already carried the pattern for waiting. With that fixed, all 38 tests pass on both.
+
+That run also showed the machine failing in the wrong place. The workflow's `runs-on` is `macos-14` and its `args` name `universal-apple-darwin`, so replaying it on Ubuntu could never work — but the refusal came from `rustup` deep inside the build. A replay on a platform the workflow was not written for is now refused before any environment is touched, and `ci validate` reports which platforms a workflow can be replayed on.
+
+AIRDATA's workflow and test changes are in its working tree and have not been committed there.
+
 ### Not exercised
 
-- Workflow replay (`ci run`) on any platform. Only `ci validate` has been run, and it fails closed on the only workflows available here: `airdata`'s has no test gate, and this repository's own uses a matrix and `actions/download-artifact`, neither of which has an adapter.
+- `ci run` on Windows or Ubuntu. Only macOS has been replayed.
 - `release`, and any installer or package acceptance.
 - The release workflow. It has never run; no runner has built a worker and no application has been assembled from one.
 - Driving a guest from the seeded application directory. Only one directory can hold the named Parallels share, and repointing it would have taken the share away from this checkout.

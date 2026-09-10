@@ -8,8 +8,50 @@ pub use adapter::{Adapter, STAGE_ORDER};
 pub use parse::{Job, Step, Workflow};
 pub use stage::{check_gates, stage_counts, stage_of, stages};
 
+use crate::Platform;
 use anyhow::{bail, Context, Result};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// The platform a runner label names, when it names one this machine drives.
+pub fn platform_for_runner(label: &str) -> Option<Platform> {
+    let label = label.to_lowercase();
+    if label.starts_with("macos") {
+        Some(Platform::Macos)
+    } else if label.starts_with("ubuntu") || label.starts_with("linux") {
+        Some(Platform::Linux)
+    } else if label.starts_with("windows") {
+        Some(Platform::Windows)
+    } else {
+        None
+    }
+}
+
+/// The platforms this workflow was written for.
+///
+/// An empty set means no job named a runner this machine recognises, which
+/// places no constraint on where the replay runs.
+pub fn declared_platforms(workflow: &Workflow) -> BTreeSet<Platform> {
+    workflow.jobs.iter().filter_map(|job| platform_for_runner(&job.runs_on)).collect()
+}
+
+/// Refuse a replay the workflow was never written to perform.
+///
+/// A workflow that asks for `macos-14` and names an Apple target cannot be
+/// carried out on Linux. Saying so here is the difference between a clear
+/// refusal and a confusing failure deep inside someone else's build.
+pub fn check_platform(workflow: &Workflow, platform: Platform) -> Result<()> {
+    let declared = declared_platforms(workflow);
+    if declared.is_empty() || declared.contains(&platform) {
+        return Ok(());
+    }
+    let names: Vec<&str> = declared.iter().map(|value| value.as_str()).collect();
+    bail!(
+        "이 워크플로는 {} 에서 실행되도록 작성됐어요. {platform}에서는 재현할 수 없습니다. \
+         세 운영체제를 모두 재현하려면 workflow가 특정 플랫폼의 타깃을 고정하지 않아야 해요.",
+        names.join(", ")
+    )
+}
 
 /// Read and validate a workflow file.
 pub fn load(path: &Path, event: &str, reference: Option<&str>) -> Result<Workflow> {

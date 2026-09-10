@@ -1,7 +1,11 @@
 //! Which GitHub actions this machine can stand in for, and what each one is.
 
 /// The local stand-in for a supported action.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// This travels from the controller to the worker, so it is serialized as the
+/// name it is known by rather than being reconstructed from a second field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Adapter {
     Checkout,
     PnpmSetup,

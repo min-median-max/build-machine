@@ -47,9 +47,29 @@
 
 제거된 Python 구현이 남긴 실행 기록 15건을 삭제했습니다. 현재 판독기가 파싱할 수 없어 새로고침마다 읽지 못했다고 보고했고, 그것을 위한 호환 경로는 두지 않으며, 그 실행들의 기록은 `verification.ko.md`에 있습니다.
 
+### 워크플로 재현
+
+`ADOPTING.ko.md`를 프로젝트가 따를 가이드로 작성했고, AIRDATA를 그 첫 적용 대상으로 삼았습니다. 이 프로젝트의 릴리즈 workflow는 한 번도 돌리지 않는 Rust 테스트 38개를 갖고 있었고 smoke 단계가 없어 검증에서 거부됐습니다. 이미 있던 테스트를 실행하는 단계를 추가하고, 호스티드 러너가 할 수 없는 smoke 단계에 이유를 남겨 계약을 충족했습니다.
+
+`build-machine ci run ~/Work/airdata --workflow .github/workflows/release-macos.yml --os macos`가 `passed_with_limits`로 완료됐습니다:
+
+- `setup` 제한 포함 — checkout·pnpm·Node.js·Rust·캐시를 로컬 어댑터로, `pnpm install --frozen-lockfile`은 실제 실행, 서명 단계는 조건이 비밀에 의존해 건너뜀.
+- `test` 통과 — Rust 테스트 38개와 프런트엔드 타입 검사를 스냅샷 안에서 실행.
+- `build` 통과 — `tauri-apps/tauri-action`이 `data_0.1.0_universal.dmg`를 만들었고 SHA-256과 크기를 기록.
+- `smoke` 제한 포함 — workflow 주석의 이유를 그대로 담음.
+- `signing: unverified`이며, 서명·공증·업로드가 없었다는 것이 제한에 기록됨.
+
+이 실행으로 결함 두 개를 찾아 고쳤습니다. `adapter` 필드에 `#[serde(skip)]`이 걸려 있어 모든 단계가 셸 단계로 워커에 도착했고 첫 단계가 존재하지 않는 명령에서 실패했습니다. 이제 직렬화되며, 모든 어댑터가 요청 문서를 건너 살아남는지 테스트가 확인합니다. 그리고 workflow의 `args`가 이미 `--target`을 지정했는데 머신이 자기 것을 또 붙였습니다. 이제 workflow의 인자가 우선합니다.
+
+같은 workflow를 Ubuntu에서 재현하자 거기서만 실패하는 테스트가 나왔습니다. 글이 반영되기를 기다리지 않고 `items[0]`을 읽고 있었고, macOS에서는 순전히 속도 덕에 통과하고 있었습니다. 같은 파일에 이미 기다리는 패턴이 있었습니다. 고친 뒤 두 곳 모두에서 38개가 통과합니다.
+
+그 실행은 머신이 엉뚱한 자리에서 실패한다는 것도 드러냈습니다. workflow의 `runs-on`은 `macos-14`이고 `args`는 `universal-apple-darwin`을 지정하므로 Ubuntu 재현은 애초에 성립하지 않는데, 거부가 빌드 깊숙한 `rustup`에서 나왔습니다. 이제 workflow가 쓰이지 않은 플랫폼에서의 재현은 환경에 손대기 전에 거부하며, `ci validate`가 재현 가능한 플랫폼을 보고합니다.
+
+AIRDATA의 workflow와 테스트 변경은 그 저장소의 작업 트리에 있으며 커밋하지 않았습니다.
+
 ### 수행하지 않은 것
 
-- 어떤 플랫폼에서도 워크플로 재현(`ci run`)을 하지 않았습니다. `ci validate`까지만 실행했고, 여기서 쓸 수 있는 워크플로 어느 것도 통과하지 못합니다 — `airdata`는 test 게이트가 없고, 이 저장소 자신의 것은 matrix와 `actions/download-artifact`를 쓰는데 둘 다 어댑터가 없습니다.
+- Windows·Ubuntu에서의 `ci run`. macOS에서만 재현했습니다.
 - `release`와 설치 프로그램·패키지 인수 확인.
 - 릴리즈 워크플로. 한 번도 실행되지 않았습니다.
 - 심어진 앱 디렉터리에서 게스트를 구동하는 것. 이름이 같은 Parallels 공유는 한 디렉터리만 가질 수 있어, 옮기면 이 체크아웃에서 공유를 빼앗게 됩니다.

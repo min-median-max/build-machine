@@ -185,6 +185,7 @@ fn execute() -> Result<()> {
                 "revision": prepared.snapshot.revision,
                 "dirty": prepared.snapshot.dirty,
                 "stages": prepared.snapshot.stage_counts,
+                "platforms": build_machine_core::workflow::declared_platforms(&prepared.workflow),
             }))?
         );
         return Ok(());

@@ -31,7 +31,6 @@ pub fn stages(workflow: &Workflow) -> BTreeMap<String, Vec<Step>> {
                     index: 0,
                     name: format!("skip {stage}"),
                     adapter: Adapter::Skip,
-                    adapter_name: Adapter::Skip.as_str().to_owned(),
                     action: None,
                     action_ref: None,
                     run: None,

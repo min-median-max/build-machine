@@ -89,15 +89,23 @@ fn tauri_action(step: &Step, source: &Path, request: &WorkRequest, environment: 
     let program = if cfg!(windows) { format!("{manager}.cmd") } else { manager.to_owned() };
     let working = working_directory(source, step)?;
     stream::checked(&program, &install, Some(&working), environment)?;
+    // The workflow's own `args` is the author's intent. The machine supplies a
+    // target or a bundle only where the workflow named none, because passing
+    // either twice is an error rather than an override.
+    let extra: Vec<String> =
+        step.with.get("args").map(|args| args.split_whitespace().map(str::to_owned).collect()).unwrap_or_default();
     let mut arguments = base;
-    arguments.extend(["--ci".to_owned(), "--no-sign".to_owned(), "--target".to_owned(), request.target.clone()]);
-    match request.bundle.clone() {
-        Some(bundle) => arguments.extend(["--bundles".to_owned(), bundle]),
-        None => arguments.extend(development_bundle()),
+    arguments.extend(["--ci".to_owned(), "--no-sign".to_owned()]);
+    if !extra.iter().any(|value| value == "--target") {
+        arguments.extend(["--target".to_owned(), request.target.clone()]);
     }
-    if let Some(extra) = step.with.get("args") {
-        arguments.extend(extra.split_whitespace().map(str::to_owned));
+    if !extra.iter().any(|value| value == "--bundles" || value == "--no-bundle") {
+        match request.bundle.clone() {
+            Some(bundle) => arguments.extend(["--bundles".to_owned(), bundle]),
+            None => arguments.extend(development_bundle()),
+        }
     }
+    arguments.extend(extra);
     arguments.extend(["--".to_owned(), "--locked".to_owned()]);
     stream::checked(&program, &arguments, Some(source), environment)?;
     let output =
@@ -156,7 +164,7 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             let mut entry = ReportStep {
                 index: step.index,
                 name: step.name.clone(),
-                adapter: step.adapter_name.clone(),
+                adapter: step.adapter.as_str().to_owned(),
                 status: Outcome::Passed,
                 started_at: build_machine_core::now(),
                 finished_at: None,

@@ -2,6 +2,8 @@
 
 [한국어](PROJECTS.ko.md)
 
+This describes what the machine supports. To change your own repository so it qualifies, follow [Adopting the build machine](ADOPTING.md).
+
 These are the build machine's current project requirements. A project is registered only at the Git repository root. Tauri and Wails do not require a separate build-machine manifest: the repository workflow is the CI contract when workflow replay is selected.
 
 ## Current automatic recipes
