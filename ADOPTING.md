@@ -52,12 +52,39 @@ installed against what is declared.
 
 | Platform | What the project has to survive |
 | --- | --- |
-| Windows | WebView2, MSVC, ARM64. A `.cmd` shim is not directly executable — go through `cmd.exe`. |
+| Windows | WebView2, MSVC, ARM64. A `run:` block runs in PowerShell, which reports only the last line's exit code. |
 | Ubuntu | WebKitGTK and the system libraries in `machine.json`'s `packages`. |
 | macOS | A universal build has to contain both architectures; the machine checks with `lipo` and fails if one is missing. |
 
 Compiling for the right OS is your code's problem. The machine provisions its
 declared prerequisites; it does not infer a native library from your source.
+
+### Put one command in a step
+
+A `run:` block is handed to a different shell on each runner, and they do not
+agree on what a failure means. `bash -e` on Linux and macOS stops at the first
+command that fails. PowerShell on Windows runs every line and reports only the
+last exit code, so a failing type-check followed by a passing test suite is a
+passing job.
+
+```yaml
+      # Windows reports only the last line's exit code, so the check above it
+      # can fail without failing the job.
+      - name: Test the frontend types and the Rust core
+        run: |
+          pnpm exec tsc --noEmit
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      # One command per step fails the same way everywhere.
+      - name: Check the frontend types
+        run: pnpm exec tsc --noEmit
+
+      - name: Test the Rust core
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+```
+
+Separate steps also make the report say which one failed, rather than leaving
+one block's output to be read.
 
 ## 5. The workflow is the contract
 

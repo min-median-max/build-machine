@@ -48,12 +48,38 @@
 
 | 플랫폼 | 프로젝트가 견뎌야 하는 것 |
 | --- | --- |
-| Windows | WebView2, MSVC, ARM64. `.cmd` 심은 직접 실행되지 않으므로 `cmd.exe`를 거칩니다. |
+| Windows | WebView2, MSVC, ARM64. `run:` 블록은 PowerShell에서 실행되며 마지막 줄의 종료 코드만 보고합니다. |
 | Ubuntu | WebKitGTK와 `machine.json`의 `packages`에 있는 시스템 라이브러리. |
 | macOS | 유니버설 빌드는 두 아키텍처를 모두 담아야 합니다. 머신이 `lipo`로 확인하고 하나가 없으면 실패합니다. |
 
 의도한 OS용으로 컴파일하는 것은 당신 코드의 몫입니다. 머신은 선언된 사전 요구사항을
 설치할 뿐, 소스에서 임의의 네이티브 라이브러리를 추론하지 않습니다.
+
+### 한 스텝에 한 명령을 둡니다
+
+`run:` 블록은 러너마다 다른 셸에 전달되고, 그 셸들은 실패가 무엇인지에 합의하지
+않습니다. Linux와 macOS의 `bash -e`는 실패한 첫 명령에서 멈춥니다. Windows의
+PowerShell은 모든 줄을 실행하고 마지막 종료 코드만 보고하므로, 타입 검사가 실패하고
+테스트가 통과하면 그 잡은 통과합니다.
+
+```yaml
+      # Windows는 마지막 줄의 종료 코드만 보고하므로, 그 위의 검사는 실패해도
+      # 잡을 실패시키지 못합니다.
+      - name: Test the frontend types and the Rust core
+        run: |
+          pnpm exec tsc --noEmit
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      # 스텝당 명령 하나면 어디서든 같은 방식으로 실패합니다.
+      - name: Check the frontend types
+        run: pnpm exec tsc --noEmit
+
+      - name: Test the Rust core
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+```
+
+스텝을 나누면 리포트가 어느 쪽이 실패했는지 말해 줍니다. 한 블록의 출력을 읽어
+가려낼 필요가 없습니다.
 
 ## 5. Workflow가 계약입니다
 

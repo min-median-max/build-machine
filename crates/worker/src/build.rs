@@ -341,9 +341,7 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
         Framework::Custom => {
             let command = request.command.clone().context("Custom builds require a command.")?;
             let artifact = request.artifact.clone().context("Custom builds require an artifact.")?;
-            let (shell, flags) = shell_for();
-            let mut arguments = flags;
-            arguments.push(command.clone());
+            let (shell, arguments) = shell_invocation(&command);
             stream::checked(shell, &arguments, Some(&source), &environment)?;
             commands.push(command);
             executable = locate_executable(&source, &source, Some(&artifact))?;
@@ -389,12 +387,68 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
     Ok(receipt)
 }
 
-pub fn shell_for() -> (&'static str, Vec<String>) {
+/// The shell a `run:` block is handed to, with the block already in place.
+///
+/// A block is several lines and every one of them has to run. `cmd.exe /d /s
+/// /c` takes a single command line and stops at the first newline, so a block
+/// lost everything after its first line and the step still reported success.
+/// PowerShell is also what a GitHub Windows runner uses for `run:`, so this is
+/// the closer replay as well as the correct one.
+pub fn shell_invocation(command: &str) -> (&'static str, Vec<String>) {
     if cfg!(windows) {
-        ("cmd.exe", vec!["/d".to_owned(), "/s".to_owned(), "/c".to_owned()])
+        (
+            "powershell.exe",
+            vec![
+                "-NoLogo".to_owned(),
+                "-NoProfile".to_owned(),
+                "-NonInteractive".to_owned(),
+                // `pnpm` resolves to `pnpm.ps1` before `pnpm.cmd`, and the
+                // default policy refuses to load it. A hosted runner bypasses
+                // the policy for the same reason.
+                "-ExecutionPolicy".to_owned(),
+                "Bypass".to_owned(),
+                // With a redirected stream PowerShell serializes errors as
+                // CLIXML, which is what a person then has to read in the
+                // report. Text is what a log is for.
+                "-OutputFormat".to_owned(),
+                "Text".to_owned(),
+                "-EncodedCommand".to_owned(),
+                encoded_powershell(command),
+            ],
+        )
     } else {
-        ("/bin/sh", vec!["-eu".to_owned(), "-c".to_owned()])
+        ("/bin/sh", vec!["-eu".to_owned(), "-c".to_owned(), command.to_owned()])
     }
+}
+
+/// The script a Windows runner executes for a `run:` block.
+///
+/// PowerShell exits 0 even when the last native command failed, so the exit
+/// code has to be carried out explicitly or a failing `cargo test` would be
+/// read as a pass. A GitHub runner appends the same line for the same reason.
+pub fn powershell_script(command: &str) -> String {
+    // The guest's console codepage is not UTF-8, so without this a localized
+    // message arrives in the report as mojibake. A host that refuses the
+    // assignment simply keeps its own encoding.
+    let mut script = String::from("try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }\n");
+    script.push_str("$ErrorActionPreference = 'Stop'\n");
+    // A progress record is serialized as CLIXML onto the redirected stream
+    // whatever the output format says, and nobody reads a progress bar in a
+    // stored log.
+    script.push_str("$ProgressPreference = 'SilentlyContinue'\n");
+    script.push_str(command.trim_end());
+    script.push_str("\nif (Test-Path -LiteralPath variable:\\LASTEXITCODE) { exit $LASTEXITCODE }\n");
+    script
+}
+
+/// Carry the script to PowerShell without putting it on a command line.
+///
+/// Encoding sidesteps quoting entirely — no newline to truncate at, no quote
+/// to balance — and unlike a generated `.cmd` it leaves nothing on the machine.
+pub fn encoded_powershell(command: &str) -> String {
+    use base64::Engine;
+    let utf16: Vec<u8> = powershell_script(command).encode_utf16().flat_map(u16::to_le_bytes).collect();
+    base64::engine::general_purpose::STANDARD.encode(utf16)
 }
 
 fn artifact_of(path: &Path) -> Result<build_machine_core::report::Artifact> {

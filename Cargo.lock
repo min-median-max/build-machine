@@ -285,6 +285,7 @@ name = "build-machine-worker"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "build-machine-core",
  "chrono",
  "clap",

@@ -4,7 +4,7 @@
 //! a limit. A local success never establishes production signing, notarization
 //! or release publication.
 
-use crate::build::{collect_artifacts, development_bundle, extract_source, project_root, shell_for};
+use crate::build::{collect_artifacts, development_bundle, extract_source, project_root, shell_invocation};
 use anyhow::Context;
 use crate::provision::Tools;
 use crate::stream;
@@ -222,8 +222,7 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
                             bail!("Workflow step {} has an empty run command.", step.index);
                         }
                         let working = working_directory(&source, step)?;
-                        let (shell, mut arguments) = shell_for();
-                        arguments.push(command.clone());
+                        let (shell, arguments) = shell_invocation(&command);
                         entry.command = Some(command.clone());
                         println!("> {command}");
                         let timeout = timeout_for(stage_name);
