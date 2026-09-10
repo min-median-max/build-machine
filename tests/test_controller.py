@@ -30,6 +30,59 @@ class ControllerResultTests(unittest.TestCase):
             self.assertIn('test diagnosis', machine.log_path.read_text())
             self.assertIn('Exit code: 1', machine.log_path.read_text())
 
+    def test_windows_setup_records_a_completed_result(self):
+        """setup provisions and stops; it must still record a platform result."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.joinpath('machine.json').write_text(json.dumps({'platforms': {'windows': {}}, 'share': 'test'}))
+            result_file = root / 'gui-result.json'
+            provisioned = []
+
+            class FakeMachine:
+                def __init__(self, config, vm=None):
+                    self.log_path = None
+
+                def prepare(self):
+                    pass
+
+                def setup(self):
+                    provisioned.append(True)
+
+            argv = ['build.py', 'setup', '--os', 'windows', '--result-file', str(result_file)]
+            with patch.object(build, 'ROOT', root), patch.object(build, 'STATE', root / '.state'), \
+                 patch.object(build.sys, 'platform', 'darwin'), patch.object(sys, 'argv', argv), \
+                 patch.object(build, 'Machine', FakeMachine), \
+                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(build.main(), 0)
+            self.assertEqual(provisioned, [True])
+            report = json.loads(result_file.read_text())
+            self.assertEqual(report['status'], 'success')
+            self.assertIs(report['results']['windows']['success'], True)
+
+    def test_an_unexpected_defect_is_recorded_as_that_platform_failure(self):
+        """A defect must not abort the matrix without any report."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.joinpath('machine.json').write_text(json.dumps({'platforms': {'linux': {}, 'macos': {}}, 'share': 'test'}))
+            result_file = root / 'gui-result.json'
+
+            def execute(runner, args, source):
+                if runner.platform == 'linux':
+                    raise AttributeError('test defect in the worker path')
+
+            argv = ['build.py', 'build', str(root), '--os', 'linux', 'macos', '--result-file', str(result_file)]
+            with patch.object(build, 'ROOT', root), patch.object(build, 'STATE', root / '.state'), \
+                 patch.object(build.sys, 'platform', 'darwin'), patch.object(sys, 'argv', argv), \
+                 patch.object(build, 'snapshot_project', lambda args: {'project': str(root)}), \
+                 patch.object(build.Runner, 'execute', execute), \
+                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(build.main(), 1)
+            report = json.loads(result_file.read_text())
+            self.assertEqual(report['status'], 'failure')
+            self.assertIs(report['results']['linux']['success'], False)
+            self.assertIn('AttributeError: test defect in the worker path', report['results']['linux']['error'])
+            self.assertIs(report['results']['macos']['success'], True)
+
     def test_tool_results_persist_per_environment_and_change_with_configuration(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(build, 'STATE', Path(temporary)):
             config = {'node': {'version': '22.test'}}

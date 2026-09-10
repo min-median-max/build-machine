@@ -26,7 +26,7 @@ class BuildReportTests(unittest.TestCase):
             root = Path(temporary)
 
             def prepare(args):
-                reports = list((root / '.state').glob('*-result.json'))
+                reports = list((root / '.state' / 'runs').glob('*/report.json'))
                 self.assertEqual(len(reports), 1)
                 pending = json.loads(reports[0].read_text())
                 self.assertEqual(pending['status'], 'running')
@@ -41,7 +41,7 @@ class BuildReportTests(unittest.TestCase):
             self.assertIn('test source could not be prepared', report['error'])
             self.assertTrue(report['finishedAt'])
             self.assertIn(report['error'], Path(report['log']).read_text())
-            self.assertFalse(list((root / '.state').glob('*.partial')))
+            self.assertFalse(list((root / '.state').rglob('*.partial')))
 
     def test_completed_platforms_are_recorded_before_the_next_starts(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -112,5 +112,31 @@ class ProcessLookupTests(unittest.TestCase):
                 process.wait()
 
 
+class StepStreamTests(unittest.TestCase):
+    """A workflow step's output must reach the reader while the step runs."""
+
+    def test_output_is_echoed_while_it_runs_and_returned_as_one_stream(self):
+        script = 'echo first; echo to-stderr >&2; echo second'
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            result = native._stream(['/bin/sh', '-c', script], None, None, 30)
+        self.assertEqual(result.returncode, 0)
+        # stderr is interleaved into the same stream, in the order it happened.
+        self.assertEqual(result.output.split(), ['first', 'to-stderr', 'second'])
+        self.assertEqual(stream.getvalue(), result.output)
+
+    def test_a_failing_step_keeps_its_exit_code_and_output(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = native._stream(['/bin/sh', '-c', 'echo before; exit 3'], None, None, 30)
+        self.assertEqual(result.returncode, 3)
+        self.assertIn('before', result.output)
+
+    def test_a_timeout_reports_the_output_produced_so_far(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                native._stream(['/bin/sh', '-c', 'echo started; sleep 30'], None, None, 1)
+        self.assertIn('started', caught.exception.output)
+
+
 if __name__ == '__main__':
     unittest.main()

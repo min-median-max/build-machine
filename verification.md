@@ -4,9 +4,24 @@
 
 The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment results and known intermittent Parallels execution failure are recorded separately in [GUI-VERIFICATION.md](GUI-VERIFICATION.md).
 
+## Defect fixes
+
+Eight recorded defects were fixed and each is pinned by a test that fails without the fix. On the macOS host `python3 -m unittest discover -s tests` passes 41 tests, `~/.cargo/bin/cargo test --manifest-path gui/src-tauri/Cargo.toml` passes 16 (the configured Ubuntu doctor test remains ignored), `pnpm --dir gui test` passes 14 browser tests and `pnpm --dir gui run build` passes the TypeScript and Vite build.
+
+What these tests establish and what they do not:
+
+- The Windows `setup` crash is covered by a controller test with a stub machine object. The guest path it would have taken has still never been run: Windows provisioning was only ever exercised through `winbuild.py setup`, and `build.py setup --os windows` has not been run against the actual VM.
+- Retention, the run layout and the legacy migration are covered by tests over a temporary state directory. The migration was additionally run once against this checkout's own `.state`: 20 earlier reports moved under `.state/runs/` with their recorded times preserved and no legacy file left behind.
+- The operation log now contains the run summary and the location of each platform's command output. This was confirmed with a controller run whose worker was a local process, not a guest.
+- Step streaming, exit codes and timeout process-group termination are covered by tests over real child processes on macOS. Streaming through `prlctl exec` into a guest has not been re-run.
+- The dashboard changes are covered by Rust tests over report fixtures and by browser tests over mocked desktop APIs. They do not establish native rendering; no rebuilt macOS app was inspected for this change.
+- The stage-gate fix was checked against the maintained `airdata/.github/workflows/release-macos.yml`. Before the fix `ci validate` rejected it for the missing **smoke** gate alone, because its `actions/checkout` step was being read as the test stage. After the fix it is rejected for the missing **test** gate. The workflow has neither step, so the earlier record of it being rejected was correct in outcome but the test gate was never actually enforced.
+
+No AIRDATA source, GitHub workflow, signing credential, upload or release was changed or invoked.
+
 ## Workflow replay implementation
 
-The workflow replay implementation adds a strict parser and local runner for the supported GitHub Actions subset. `python3 -m unittest discover -s tests -v` passes 23 tests on the macOS host, including explicit unsupported-action and missing-gate failures, immutable ref snapshots, repository-root validation, sequential/parallel report equivalence and native workflow stage execution. `~/.cargo/bin/cargo test --manifest-path gui/src-tauri/Cargo.toml` passes 10 Rust tests (one configured Ubuntu doctor test remains ignored), and `pnpm --dir gui test` passes 13 browser tests. `pnpm --dir gui run build` passes the TypeScript and Vite build.
+The workflow replay implementation adds a strict parser and local runner for the supported GitHub Actions subset. Its tests cover explicit unsupported-action and missing-gate failures, immutable ref snapshots, repository-root validation, sequential/parallel report equivalence and native workflow stage execution. Current test counts are recorded under "Defect fixes" above; the counts first recorded here were 23 Python, 10 Rust and 13 browser tests.
 
 The maintained AIRDATA workflow currently has no test or smoke step and no `build-machine: skip ... reason=...` comments. `ci validate` therefore rejects it with the required missing-gate message until the repository documents those omissions. No AIRDATA source, GitHub workflow, signing credential, upload or release was changed or invoked by these checks. Windows and Ubuntu workflow replay code is implemented and covered by controlled tests; live replay still requires an actual run on each configured guest.
 

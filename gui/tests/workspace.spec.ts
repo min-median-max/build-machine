@@ -142,7 +142,9 @@ test('workflow replay settings pass event, ref and parallel execution to the con
   await page.getByLabel('워크플로 이벤트').selectOption('push');
   await page.getByLabel('워크플로 ref').fill('v0.1.0');
   await page.getByRole('button', { name: '병렬', exact: true }).click();
-  await page.getByRole('button', { name: '빌드 시작', exact: true }).click();
+  // A workflow path turns this into a replay, so the control says so.
+  await expect(page.getByRole('checkbox', { name: '빌드 후 실행' })).toBeDisabled();
+  await page.getByRole('button', { name: '워크플로 재현', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('빌드 완료');
   const request = await page.evaluate(() => (window as any).desktopCalls.find((call: any) => call.command === 'start_job').args);
   expect(request.workflow).toBe('.github/workflows/release.yml');

@@ -1,19 +1,47 @@
 use serde_json::{json, Value};
 use std::{fs, path::{Path, PathBuf}, time::UNIX_EPOCH};
 
+/// A replay snapshot carries the whole parsed workflow and every step's shell
+/// command. The dashboard needs the run's identity, not its recipe, so only the
+/// fields it displays cross the bridge.
+fn summarize_source(source: &Value) -> Value {
+    if !source.is_object() { return source.clone(); }
+    let mut summary = serde_json::Map::new();
+    for key in ["revision", "dirty", "sourceMode", "fileCount", "workflowPath", "event", "requestedRef"] {
+        if let Some(value) = source.get(key) { summary.insert(key.to_string(), value.clone()); }
+    }
+    if let Some(stages) = source.get("stages").and_then(Value::as_object) {
+        summary.insert("stageCounts".into(), Value::Object(stages.iter()
+            .map(|(name, steps)| (name.clone(), json!(steps.as_array().map(Vec::len).unwrap_or(0))))
+            .collect()));
+    }
+    Value::Object(summary)
+}
+
 pub fn read(root: &Path, projects: &[String]) -> Result<Value, String> {
     let mut history = Vec::new();
     let mut unreadable = 0;
-    let state = root.join(".state");
-    if state.exists() {
-        for entry in fs::read_dir(&state).map_err(|e| format!("빌드 기록을 읽지 못했어요: {e}"))? {
+    let runs = root.join(".state/runs");
+    if runs.is_dir() {
+        for entry in fs::read_dir(&runs).map_err(|e| format!("빌드 기록을 읽지 못했어요: {e}"))? {
             let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if !path.file_name().and_then(|s| s.to_str()).is_some_and(|s| s.ends_with("-result.json")) { continue; }
-            let Some(report) = fs::read(&path).ok().and_then(|data| serde_json::from_slice::<Value>(&data).ok()) else {
+            let id = entry.file_name().to_string_lossy().into_owned();
+            if id.starts_with('.') || !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) { continue; }
+            let path = entry.path().join("report.json");
+            let data = match fs::read(&path) {
+                Ok(data) => data,
+                // A run directory without a report is the current run before its
+                // first write, or one being pruned. Neither is a broken record.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => { unreadable += 1; continue; }
+            };
+            let Some(report) = serde_json::from_slice::<Value>(&data).ok() else {
                 unreadable += 1; continue;
             };
-            if report["action"] != "build" { continue; }
+            // `ci` is a workflow replay of the same project and belongs here;
+            // diagnosis, setup and launch records are not builds.
+            let action = report["action"].as_str().unwrap_or_default();
+            if !["build", "ci"].contains(&action) { continue; }
             let Some(project) = report["project"].as_str().or_else(|| report["source"]["project"].as_str()) else {
                 unreadable += 1; continue;
             };
@@ -33,17 +61,19 @@ pub fn read(root: &Path, projects: &[String]) -> Result<Value, String> {
             let status = if report["status"] == "running" { "incomplete" }
                 else if failed { "failure" } else if report["status"] == "passed_with_limits" { "passed_with_limits" }
                 else if complete { "success" } else { "incomplete" };
-            let recorded_at = entry.metadata().and_then(|m| m.modified()).ok()
+            let recorded_at = fs::metadata(&path).and_then(|m| m.modified()).ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok()).map(|time| time.as_millis() as u64);
             if recorded_at.is_none() { unreadable += 1; }
-            history.push(json!({"id":entry.file_name().to_string_lossy(),"project":project,"status":status,
+            history.push(json!({"id":id,"project":project,"status":status,"action":action,
                 "platforms":platforms,"results":report["results"],"recordedAt":recorded_at,
                 "finishedAt":report["finishedAt"],"log":report["log"],"error":report["error"],
-                "executionMode":report["executionMode"],"source":report["source"]}));
+                "executionMode":report["executionMode"],"source":summarize_source(&report["source"])}));
         }
     }
-    history.sort_by(|a, b| b["recordedAt"].as_u64().cmp(&a["recordedAt"].as_u64())
-        .then_with(|| b["id"].as_str().cmp(&a["id"].as_str())));
+    // The run id is the start stamp, so it orders chronologically. The report's
+    // mtime is its last update, which would float a long run above later ones.
+    history.sort_by(|a, b| b["id"].as_str().cmp(&a["id"].as_str())
+        .then_with(|| b["recordedAt"].as_u64().cmp(&a["recordedAt"].as_u64())));
     let rows: Vec<Value> = projects.iter().map(|path| json!({"path":path,
         "latest":history.iter().find(|record| record["project"].as_str() == Some(path))})).collect();
     history.truncate(6);

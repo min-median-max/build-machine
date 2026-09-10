@@ -7,10 +7,12 @@ export interface Preferences { controllerPath: string; environmentPlatforms: Pla
 export interface Environment { id: Platform; title: string; vm: string | null; target: string; status: string }
 export interface Overview { controllerPath: string; environments: Environment[]; toolStatus: Partial<Record<Platform, ResultState>>; warning: string | null }
 export interface OutputLine { stream: string; line: string }
-export interface PlatformResult { success: boolean; status?: string; error?: string; finishedAt: string; stages?: Record<string, unknown>; artifacts?: { path: string; sha256: string; size?: number }[]; limits?: string[] }
+export interface WorkflowStep { index?: number; name?: string; adapter?: string; status?: string; command?: string; exitCode?: number; output?: string; reason?: string; skipped?: boolean; localAdapter?: boolean; timeoutSeconds?: number }
+export interface WorkflowStage { status?: string; error?: string; steps?: WorkflowStep[] }
+export interface PlatformResult { success: boolean; status?: string; error?: string; finishedAt: string; log?: string; stages?: Record<string, WorkflowStage>; artifacts?: { path: string; sha256: string; size?: number }[]; limits?: string[] }
 export interface JobOutcome { exitCode: number; result: { results: Partial<Record<Platform, PlatformResult>>; log: string } | null; resultPath: string }
 export interface ResultState extends PlatformResult { action: Action }
-export interface BuildRecord { id: string; project: string; status: 'success' | 'passed_with_limits' | 'failure' | 'incomplete'; platforms: Platform[]; results: Partial<Record<Platform, PlatformResult>> | null; recordedAt: number | null; finishedAt: string | null; log: string | null; error: string | null; executionMode?: ExecutionMode; source?: { revision?: string; dirty?: boolean; [key: string]: unknown } }
+export interface BuildRecord { id: string; project: string; status: 'success' | 'passed_with_limits' | 'failure' | 'incomplete'; action?: 'build' | 'ci'; platforms: Platform[]; results: Partial<Record<Platform, PlatformResult>> | null; recordedAt: number | null; finishedAt: string | null; log: string | null; error: string | null; executionMode?: ExecutionMode; source?: { revision?: string; dirty?: boolean; workflowPath?: string; event?: string; requestedRef?: string | null; stageCounts?: Record<string, number>; [key: string]: unknown } }
 export interface DashboardData { projects: { path: string; latest: BuildRecord | null }[]; history: BuildRecord[]; warning: string | null }
 export interface RunningJob { action: Action; projectPath: string | null; platform: Platform | null; seconds: number }
 export const actionLabels: Record<Action, string> = { doctor: '환경 진단', setup: '도구 준비', build: '빌드', run: '앱 실행' };

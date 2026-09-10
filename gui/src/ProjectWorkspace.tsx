@@ -8,6 +8,9 @@ export function ProjectWorkspace({ project, available, busy, onChange, onRemove,
 }) {
   if (!project) return <section className="project-empty"><Icon name="folder" size={40}/><h2>프로젝트를 등록해주세요</h2><p>Git 프로젝트 폴더를 등록하면 빌드 설정을 저장할 수 있어요.</p><button className="primary-button" disabled={!!busy} onClick={onAdd}><Icon name="plus" size={17}/>폴더 등록</button></section>;
   const disabled = !!busy || !available || !project.platforms.length;
+  // A workflow path turns the build button into a workflow replay, and the
+  // replay has no launch step. Saying so beats a checkbox that does nothing.
+  const replay = !!project.workflow?.trim();
   return <>
     <section className="project-selector">
       <span className="project-folder"><Icon name="folder" size={22}/></span>
@@ -30,7 +33,7 @@ export function ProjectWorkspace({ project, available, busy, onChange, onRemove,
     </section>
     <section className="action-bar">
       <button className="secondary-button" disabled={disabled} onClick={() => onStart('run')}><Icon name="play" size={14}/>최근 빌드 실행</button>
-      <div className="build-actions"><label className="launch-option"><input type="checkbox" checked={project.launch} disabled={!!busy} onChange={event => onChange({ ...project, launch: event.target.checked })}/>빌드 후 실행</label><button className="primary-button" disabled={disabled} onClick={() => onStart('build')}><Icon name={busy === 'build' ? 'refresh' : 'box'} className={busy === 'build' ? 'spin' : ''} size={17}/>{busy === 'build' ? '빌드 중' : '빌드 시작'}<Icon name="arrow" size={16}/></button></div>
+      <div className="build-actions"><label className="launch-option" title={replay ? '워크플로 재현에는 실행 단계가 없어요.' : undefined}><input type="checkbox" checked={project.launch && !replay} disabled={!!busy || replay} onChange={event => onChange({ ...project, launch: event.target.checked })}/>빌드 후 실행</label><button className="primary-button" disabled={disabled} onClick={() => onStart('build')}><Icon name={busy === 'build' ? 'refresh' : 'box'} className={busy === 'build' ? 'spin' : ''} size={17}/>{busy === 'build' ? (replay ? '재현 중' : '빌드 중') : (replay ? '워크플로 재현' : '빌드 시작')}<Icon name="arrow" size={16}/></button></div>
     </section>
   </>;
 }

@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 import fcntl
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -22,10 +23,14 @@ class Runner:
         self.vm = config['platforms'][platform].get('vm')
         self.share = Path('/media/psf') / config['share']
 
-    def call(self, args, capture=False):
+    def call(self, args, capture=False, quiet=False):
+        """Run a guest command. `capture` returns the output; it does not hide
+        it. Only `quiet` suppresses the live stream, for machine-readable
+        introspection whose payload would bury the operation output."""
         args = [str(arg) for arg in args]
         display = shlex.join(args)
-        print('> ' + display, flush=True)
+        if not quiet:
+            print('> ' + display, flush=True)
         with self.log.open('ab') as log:
             log.write(('> ' + display + '\n').encode())
             log.flush()
@@ -35,7 +40,7 @@ class Runner:
                     log.write(line)
                     log.flush()
                     chunks.append(line)
-                    if not capture:
+                    if not quiet:
                         print(decode_output(line).rstrip(), flush=True)
                 code = process.wait()
             log.write(('Exit code: %s\n' % code).encode())
@@ -47,7 +52,7 @@ class Runner:
     def prepare(self):
         if self.platform != 'linux':
             return
-        info = json.loads(self.call(['prlctl','list','-i','--json',self.vm], capture=True))[0]
+        info = json.loads(self.call(['prlctl','list','-i','--json',self.vm], capture=True, quiet=True))[0]
         if info['State'] != 'running' or info.get('GuestTools', {}).get('state') != 'installed':
             raise RuntimeError('Start the Linux VM, sign in to its desktop and install Parallels Tools.')
         folders = info.get('Host Shared Folders', {})
@@ -139,9 +144,9 @@ def snapshot_ci(args, config):
     else:
         temporary.replace(archive)
     stages = workflow.stage_steps(selected)
-    for stage_steps in stages.values():
+    for stage, stage_steps in stages.items():
         for step in stage_steps:
-            step.setdefault('stage', next((stage for stage, values in stages.items() if step in values), 'setup'))
+            step.setdefault('stage', stage)
     return dict(source, projectKey=project_key(project), project=str(project), archive=str(archive),
                 workflow=selected.serializable(), stages=stages,
                 event=args.event, requestedRef=args.ref, workflowPath=selected.path)
@@ -168,69 +173,253 @@ def write_report(report, path, result_file):
         partial.replace(destination)
 
 
-def retain_run(report, stamp, config):
-    """Keep inspectable run reports while bounding controller state."""
-    runs = STATE / 'runs'
-    current = runs / stamp
-    current.mkdir(parents=True, exist_ok=True)
-    write_report(report, current / 'report.json', None)
-    manifest = {'runId': stamp, 'project': report.get('project'), 'status': report.get('status'),
-                'executionMode': report.get('executionMode'), 'source': report.get('source'),
-                'platforms': report.get('platforms'), 'results': report.get('results')}
-    write_report(manifest, current / 'manifest.json', None)
-    policy = config.get('retention', {}) if isinstance(config, dict) else {}
-    max_runs = int(policy.get('maxRunsPerProject', 20))
-    max_bytes = int(policy.get('maxBytes', 20 * 1024 * 1024 * 1024))
-    max_age = datetime.timedelta(days=int(policy.get('days', 30)))
-    now = datetime.datetime.now(datetime.timezone.utc)
-    candidates = []
-    for path in runs.iterdir():
-        if not path.is_dir() or path.name == stamp:
+LEGACY_SUFFIX = '-result.json'
+LOG_SUFFIXES = ('-matrix.log', '-windows.log', '-linux.log', '-macos.log')
+
+
+def log_index():
+    """Map each run stamp to its log files. A stamp contains hyphens, so the
+    suffix set is matched explicitly instead of splitting on the separator."""
+    index = {}
+    logs = STATE / 'logs'
+    if not logs.is_dir():
+        return index
+    for path in logs.iterdir():
+        if path.is_symlink() or not path.is_file():
             continue
+        for suffix in LOG_SUFFIXES:
+            if path.name.endswith(suffix):
+                index.setdefault(path.name[:-len(suffix)], []).append(path)
+                break
+    return index
+
+
+def file_size(path):
+    try:
+        return path.stat().st_size if path.is_file() and not path.is_symlink() else 0
+    except OSError:
+        return 0
+
+
+def tree_size(path):
+    return sum(file_size(item) for item in path.rglob('*'))
+
+
+def remove_tree(path):
+    for child in sorted(path.rglob('*'), key=lambda item: len(item.parts), reverse=True):
         try:
-            modified = datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc)
+            if child.is_dir() and not child.is_symlink():
+                child.rmdir()
+            else:
+                child.unlink(missing_ok=True)
         except OSError:
+            return False
+    try:
+        path.rmdir()
+    except OSError:
+        return False
+    return True
+
+
+def collect_runs(runs, stamp, logs):
+    """Describe every retained run except the current one.
+
+    A run is its report plus the logs it points at, so both are sized and
+    evicted together. The report file's own mtime is used: the directory's
+    mtime moves on every atomic replace and would misreport age.
+    """
+    entries = []
+    if not runs.is_dir():
+        return entries
+    for path in runs.iterdir():
+        if path.name == stamp or path.name.startswith('.') or path.is_symlink() or not path.is_dir():
             continue
         report_file = path / 'report.json'
-        value = None
-        if report_file.is_file():
-            try:
-                value = json.loads(report_file.read_text())
-            except (OSError, ValueError):
-                value = None
-        if value and value.get('status') in ('running', 'incomplete'):
+        try:
+            value = json.loads(report_file.read_text())
+        except (OSError, ValueError):
+            value = None
+        if not isinstance(value, dict):
+            value = None
+        try:
+            modified = (report_file if report_file.is_file() else path).stat().st_mtime
+        except OSError:
             continue
-        size = sum(file.stat().st_size for file in path.rglob('*') if file.is_file())
-        candidates.append((modified, path, size, value))
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    kept = 0
-    total = sum(item[2] for item in candidates)
-    for modified, path, size, value in candidates:
-        project = value.get('project') if isinstance(value, dict) else None
-        same_project = [item for item in candidates if (item[3] or {}).get('project') == project]
-        expired = now - modified > max_age
-        over_runs = same_project.index((modified, path, size, value)) >= max_runs if (modified, path, size, value) in same_project else False
-        over_bytes = total > max_bytes
-        if expired or over_runs or over_bytes:
-            for child in sorted(path.rglob('*'), reverse=True):
-                if child.is_file() or child.is_symlink():
-                    child.unlink(missing_ok=True)
-                elif child.is_dir():
-                    child.rmdir()
-            path.rmdir()
-            total -= size
+        source = (value or {}).get('source')
+        run_logs = logs.get(path.name, [])
+        entries.append({'name': path.name, 'path': path, 'modified': modified, 'logs': run_logs,
+                        'size': tree_size(path) + sum(file_size(file) for file in run_logs),
+                        'status': (value or {}).get('status'),
+                        'project': (value or {}).get('project') or (source or {}).get('project')})
+    return entries
+
+
+def prune_orphan_logs(horizon, live):
+    """Remove expired logs that no retained run points at.
+
+    `winbuild.py` writes its own logs and keeps no run report, and a run pruned
+    by an earlier policy could leave its logs behind. Neither is reachable from
+    a report, so only age bounds them.
+    """
+    logs = STATE / 'logs'
+    if not logs.is_dir():
+        return
+    for path in logs.iterdir():
+        try:
+            if path.is_symlink() or not path.is_file() or path.suffix != '.log':
+                continue
+            if any(path.name.startswith(stamp) for stamp in live):
+                continue
+            if datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc) < horizon:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def prune_gui_results(horizon, keep=()):
+    """The `--result-file` copies are transient. The current run's copy is never
+    removed: the caller reads it after this process exits."""
+    directory = STATE / 'gui'
+    if not directory.is_dir():
+        return
+    protected = set()
+    for path in keep:
+        if not path:
+            continue
+        try:
+            protected.add(Path(path).resolve())
+        except OSError:
+            continue
+    for path in directory.iterdir():
+        try:
+            if path.is_symlink() or not path.is_file() or path.resolve() in protected:
+                continue
+            if datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc) < horizon:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def retain_run(report, stamp, config, keep=()):
+    """Bound controller state without removing the current run.
+
+    Age, per-project count and total bytes are applied independently. Eviction
+    is oldest first: the newest inspectable run must survive a full disk.
+    """
+    policy = config.get('retention', {}) if isinstance(config, dict) else {}
+    max_runs = max(int(policy.get('maxRunsPerProject', 20)), 1)
+    max_bytes = max(int(policy.get('maxBytes', 20 * 1024 * 1024 * 1024)), 0)
+    horizon = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=int(policy.get('days', 30)))
+    runs = STATE / 'runs'
+    logs = log_index()
+    entries = collect_runs(runs, stamp, logs)
+    entries.sort(key=lambda entry: (entry['modified'], entry['name']))
+    doomed = set()
+    # Age. An abandoned `running` report is reclaimed here and nowhere else:
+    # main() holds the exclusive lock, so no other run is still alive.
+    for entry in entries:
+        if entry['modified'] < horizon.timestamp():
+            doomed.add(entry['name'])
+    # Per project keep the newest runs; the current run occupies one slot.
+    kept = {report.get('project'): 1}
+    for entry in reversed(entries):
+        if entry['name'] in doomed or entry['status'] in ('running', 'incomplete'):
+            continue
+        count = kept.get(entry['project'], 0)
+        if count >= max_runs:
+            doomed.add(entry['name'])
         else:
-            kept += 1
-    return kept
+            kept[entry['project']] = count + 1
+    # Total bytes, evicting the oldest first until the cap is satisfied.
+    total = tree_size(runs / stamp) + sum(file_size(file) for file in logs.get(stamp, []))
+    total += sum(entry['size'] for entry in entries if entry['name'] not in doomed)
+    for entry in entries:
+        if total <= max_bytes:
+            break
+        if entry['name'] in doomed or entry['status'] in ('running', 'incomplete'):
+            continue
+        doomed.add(entry['name'])
+        total -= entry['size']
+    survivors = 0
+    live = {stamp}
+    for entry in entries:
+        if entry['name'] not in doomed:
+            survivors += 1
+            live.add(entry['name'])
+        elif remove_tree(entry['path']):
+            for file in entry['logs']:
+                file.unlink(missing_ok=True)
+        else:
+            survivors += 1
+            live.add(entry['name'])
+    prune_orphan_logs(horizon, live)
+    prune_gui_results(horizon, keep)
+    return survivors
+
+
+def migrate_legacy_runs():
+    """Move pre-consolidation `.state/<stamp>-result.json` reports under `.state/runs/`.
+
+    The new file is durable before the legacy copy is unlinked, so an
+    interrupted migration never loses a report.
+    """
+    runs = STATE / 'runs'
+    moved = 0
+    for path in sorted(STATE.glob('*' + LEGACY_SUFFIX)):
+        if path.is_symlink() or not path.is_file():
+            continue
+        stamp = path.name[:-len(LEGACY_SUFFIX)]
+        if not stamp or stamp in ('.', '..') or os.sep in stamp or (os.altsep and os.altsep in stamp):
+            continue
+        target = runs / stamp / 'report.json'
+        if target.parent.parent != runs:
+            continue
+        try:
+            if target.is_file() and target.stat().st_size:
+                # An earlier migration already wrote the canonical report; the
+                # legacy copy is redundant and must not replace a newer file.
+                path.unlink(missing_ok=True)
+                continue
+            data = path.read_bytes()
+            stat = path.stat()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            partial = target.with_name(target.name + '.partial')
+            partial.write_bytes(data)
+            os.utime(partial, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            partial.replace(target)
+            os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            if target.stat().st_size == len(data):
+                path.unlink(missing_ok=True)
+                moved += 1
+        except OSError:
+            continue
+    return moved
+
+
+def note(log, text):
+    """Append one line to the operation log. This file is what the desktop app
+    opens for a run, so it must describe the run even when nothing fails."""
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open('a') as output:
+            output.write('%s %s\n' % (datetime.datetime.now(datetime.timezone.utc).isoformat(), text))
+    except OSError:
+        pass
 
 
 def execute_operation(args, platforms, stamp, log):
-    report_path = STATE / (stamp + '-result.json')
+    # write_report creates the parent, so the run directory and its first report
+    # appear one atomic rename apart rather than leaving an empty directory.
+    report_path = STATE / 'runs' / stamp / 'report.json'
     report = {'runId': stamp, 'action': args.action, 'project': str(args.project.expanduser().resolve()) if hasattr(args, 'project') else None,
               'platforms': platforms, 'executionMode': getattr(args, 'execution', 'sequential'), 'status': 'running',
               'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
               'source': None, 'results': {}, 'log': str(log)}
     write_report(report, report_path, args.result_file)
+    note(log, 'START run=%s action=%s platforms=%s execution=%s' % (stamp, args.action, ','.join(platforms), report['executionMode']))
+    if report['project']:
+        note(log, 'PROJECT ' + report['project'])
+    note(log, 'REPORT ' + str(report_path))
     config = {}
     try:
         config = json.loads((ROOT / 'machine.json').read_text())
@@ -241,11 +430,14 @@ def execute_operation(args, platforms, stamp, log):
         if snapshot and snapshot.get('project'):
             report['project'] = snapshot['project']
         write_report(report, report_path, args.result_file)
+        if snapshot and snapshot.get('sourceHash'):
+            note(log, 'SOURCE revision=%s dirty=%s hash=%s' % (snapshot.get('revision'), snapshot.get('dirty'), snapshot['sourceHash']))
 
         def execute_platform(platform):
             platform_log = STATE / 'logs' / (stamp + '-' + platform + '.log')
             platform_log.parent.mkdir(parents=True, exist_ok=True)
             print('PLATFORM: ' + platform, flush=True)
+            note(log, 'PLATFORM %s started; command output goes to %s' % (platform, platform_log))
             try:
                 if platform == 'windows':
                     machine = Machine(config)
@@ -259,13 +451,16 @@ def execute_operation(args, platforms, stamp, log):
                         result = {'success': True, 'status': 'passed'}
                     elif args.action == 'ci':
                         result = machine.ci(args, snapshot, config)
-                    else:
+                    elif args.action == 'release':
+                        raise RuntimeError('Windows installer rehearsal is not implemented yet. Use ci run for workflow artifact validation.')
+                    elif args.action in ('setup', 'build'):
+                        # Both provision first; setup stops there.
                         machine.setup()
                         if args.action == 'build':
                             machine.build(args, snapshot)
-                            result = {'success': True, 'status': 'passed'}
-                        elif args.action == 'release':
-                            raise RuntimeError('Windows installer rehearsal is not implemented yet. Use ci run for workflow artifact validation.')
+                        result = {'success': True, 'status': 'passed'}
+                    else:
+                        raise RuntimeError('Unsupported Windows action: ' + str(args.action))
                 else:
                     runner = Runner(config, platform, platform_log)
                     if args.action == 'ci':
@@ -276,12 +471,20 @@ def execute_operation(args, platforms, stamp, log):
                 if not isinstance(result, dict):
                     result = {'success': True, 'status': 'passed'}
                 result.setdefault('success', result.get('status') in ('passed', 'passed_with_limits', 'success'))
-            except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
-                result = {'success': False, 'status': 'failed', 'error': str(error)}
-                print('ERROR: ' + str(error), file=sys.stderr, flush=True)
+            # A defect in one platform's code path must be recorded as that
+            # platform's failure, not abort the whole matrix without a report.
+            # The type name is kept so an unexpected defect stays identifiable.
+            # KeyboardInterrupt and SystemExit are not Exception, so an
+            # interrupted run still stops immediately.
+            except Exception as error:
+                reason = str(error) if isinstance(error, (OSError, ValueError, RuntimeError, subprocess.CalledProcessError)) else '%s: %s' % (type(error).__name__, error)
+                result = {'success': False, 'status': 'failed', 'error': reason}
+                print('ERROR: ' + reason, file=sys.stderr, flush=True)
             result['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             result.setdefault('attempts', 1)
             result.setdefault('log', str(platform_log))
+            note(log, 'PLATFORM %s %s%s' % (platform, result.get('status', 'unknown'),
+                                            '' if result.get('success') else ' error=' + str(result.get('error', ''))))
             return platform, result
 
         if getattr(args, 'execution', 'sequential') == 'parallel' and len(platforms) > 1:
@@ -300,21 +503,20 @@ def execute_operation(args, platforms, stamp, log):
                 write_report(report, report_path, args.result_file)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         report['error'] = str(error)
-        with log.open('a') as output:
-            output.write('ERROR: ' + str(error) + '\n')
+        note(log, 'ERROR: ' + str(error))
         print('ERROR: ' + str(error), file=sys.stderr, flush=True)
     success = not report.get('error') and len(report['results']) == len(platforms) and all(result.get('success') for result in report['results'].values())
     limited = success and any(result.get('status') == 'passed_with_limits' for result in report['results'].values())
     report['status'] = 'passed_with_limits' if limited else ('success' if success else 'failure')
     report['finishedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     write_report(report, report_path, args.result_file)
+    note(log, 'FINISH %s' % report['status'])
     try:
-        retain_run(report, stamp, config)
-    except (OSError, ValueError):
+        retain_run(report, stamp, config, keep=(getattr(args, 'result_file', None),))
+    except (OSError, TypeError, ValueError):
         # A retention failure must remain visible in the operation log but cannot
         # turn an already completed build into an invented build failure.
-        with log.open('a') as output:
-            output.write('WARNING: could not apply run retention policy.\n')
+        note(log, 'WARNING: could not apply run retention policy.')
     print(json.dumps(report, indent=2), flush=True)
     return 0 if success else 1
 
@@ -370,6 +572,14 @@ def main():
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise RuntimeError('Another build-machine command is running. Wait for its result.')
+            # Reports written before the run directories existed stay visible.
+            # The check is one directory read and turns itself off afterwards.
+            if next(STATE.glob('*' + LEGACY_SUFFIX), None) is not None:
+                try:
+                    moved = migrate_legacy_runs()
+                    print('Moved %s earlier run report(s) under .state/runs.' % moved, flush=True)
+                except OSError as error:
+                    print('WARNING: could not migrate earlier run reports:', error, file=sys.stderr, flush=True)
             stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
             log = STATE / 'logs' / (stamp + '-matrix.log')
             log.parent.mkdir(parents=True, exist_ok=True)

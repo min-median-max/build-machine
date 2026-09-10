@@ -206,12 +206,30 @@ def _skip_comments(comments: list[str]) -> dict[str, str]:
     return skips
 
 
+ADAPTER_STAGES = {
+    "checkout": "setup",
+    "pnpm-setup": "setup",
+    "node-setup": "setup",
+    "rust-setup": "setup",
+    "cache": "setup",
+    "tauri-build": "build",
+    "artifact-upload": "release",
+    "release": "release",
+}
+
+
 def _stage_for(step: dict[str, Any]) -> str:
-    if step.get("adapter") == "tauri-build":
-        return "build"
-    if step.get("adapter") in ("artifact-upload", "release"):
-        return "release"
-    text = " ".join(str(step.get(key, "")) for key in ("name", "run", "uses")).lower()
+    """Classify a step by its adapter; only shell steps use the name heuristic.
+
+    An action's own name must never satisfy a stage gate. `actions/checkout`
+    contains "check" and would otherwise be read as a test stage, letting a
+    workflow with no test command pass validation without the explicit
+    `# build-machine: skip test reason=...` comment.
+    """
+    adapter = step.get("adapter")
+    if adapter in ADAPTER_STAGES:
+        return ADAPTER_STAGES[adapter]
+    text = " ".join(str(step.get(key, "")) for key in ("name", "run")).lower()
     if any(word in text for word in ("smoke", "launch", "health", "e2e")):
         return "smoke"
     if any(word in text for word in ("test", "lint", "check", "verify")):

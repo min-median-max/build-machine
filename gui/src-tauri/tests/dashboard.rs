@@ -3,8 +3,9 @@ use serde_json::{json, Value};
 use std::{fs, path::Path};
 
 fn report(root: &Path, name: &str, value: Value) {
-    fs::create_dir_all(root.join(".state")).unwrap();
-    fs::write(root.join(".state").join(format!("{name}-result.json")), value.to_string()).unwrap();
+    let directory = root.join(".state/runs").join(name);
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("report.json"), value.to_string()).unwrap();
 }
 
 #[test]
@@ -42,8 +43,8 @@ fn later_failure_and_unfinished_reports_replace_old_success_without_inventing_su
 fn missing_and_corrupt_history_are_not_reported_as_success() {
     let root = tempfile::tempdir().unwrap();
     assert!(dashboard::read(root.path(), &["/app".into()]).unwrap()["projects"][0]["latest"].is_null());
-    fs::create_dir_all(root.path().join(".state")).unwrap();
-    fs::write(root.path().join(".state/broken-result.json"), "{").unwrap();
+    fs::create_dir_all(root.path().join(".state/runs/broken")).unwrap();
+    fs::write(root.path().join(".state/runs/broken/report.json"), "{").unwrap();
     let value = dashboard::read(root.path(), &["/app".into()]).unwrap();
     assert!(value["warning"].as_str().unwrap().contains("최신"));
     assert!(value["projects"][0]["latest"].is_null());
@@ -51,6 +52,54 @@ fn missing_and_corrupt_history_are_not_reported_as_success() {
     let value = dashboard::read(root.path(), &["/app".into()]).unwrap();
     assert_eq!(value["projects"][0]["latest"]["status"], "incomplete");
     assert!(value["warning"].as_str().unwrap().contains("2개"));
+}
+
+#[test]
+fn workflow_replays_are_listed_without_carrying_the_whole_recipe() {
+    let root = tempfile::tempdir().unwrap();
+    report(root.path(), "01", json!({"action":"ci","project":"/app","platforms":["linux"],
+        "status":"passed_with_limits","results":{"linux":{"success":true,"status":"passed_with_limits"}},
+        "source":{"revision":"abc123","dirty":false,"event":"workflow_dispatch",
+                  "workflowPath":".github/workflows/release.yml",
+                  "workflow":{"jobs":[{"steps":[{"run":"echo secret-looking command"}]}]},
+                  "stages":{"build":[{"index":1}],"test":[{"index":2},{"index":3}]}}}));
+    let value = dashboard::read(root.path(), &["/app".into()]).unwrap();
+    let latest = &value["projects"][0]["latest"];
+    assert_eq!(latest["status"], "passed_with_limits");
+    assert_eq!(latest["action"], "ci");
+    assert_eq!(latest["source"]["revision"], "abc123");
+    assert_eq!(latest["source"]["workflowPath"], ".github/workflows/release.yml");
+    assert_eq!(latest["source"]["stageCounts"]["test"], 2);
+    assert!(latest["source"]["workflow"].is_null());
+    assert!(latest["source"]["stages"].is_null());
+    assert!(value["warning"].is_null());
+}
+
+#[test]
+fn a_run_directory_without_a_report_is_not_a_broken_record() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join(".state/runs/20260101-000000-000000")).unwrap();
+    report(root.path(), "20260101-120000-000000", json!({"action":"build","project":"/app",
+        "platforms":["linux"],"status":"success","results":{"linux":{"success":true}}}));
+    let value = dashboard::read(root.path(), &["/app".into()]).unwrap();
+    assert!(value["warning"].is_null());
+    assert_eq!(value["history"].as_array().unwrap().len(), 1);
+    assert_eq!(value["projects"][0]["latest"]["status"], "success");
+}
+
+#[test]
+fn history_is_ordered_by_run_start_not_by_last_write() {
+    let root = tempfile::tempdir().unwrap();
+    // The earlier run finishes later, so its report is rewritten most recently.
+    report(root.path(), "20260101-100000-000000", json!({"action":"build","project":"/app",
+        "platforms":["linux"],"status":"success","results":{"linux":{"success":true}}}));
+    report(root.path(), "20260101-102000-000000", json!({"action":"build","project":"/app",
+        "platforms":["linux"],"status":"success","results":{"linux":{"success":true}}}));
+    report(root.path(), "20260101-100000-000000", json!({"action":"build","project":"/app",
+        "platforms":["linux"],"status":"success","results":{"linux":{"success":true}}}));
+    let value = dashboard::read(root.path(), &["/app".into()]).unwrap();
+    assert_eq!(value["history"][0]["id"], "20260101-102000-000000");
+    assert_eq!(value["projects"][0]["latest"]["id"], "20260101-102000-000000");
 }
 
 #[test]

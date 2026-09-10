@@ -7,9 +7,9 @@ test('dashboard summarizes registered project results and opens project controls
   await page.getByRole('button', { name: '프로젝트 추가', exact: true }).click();
   await page.evaluate(() => {
     sessionStorage.setItem('fixture-build-history', JSON.stringify([
-      { id: 'failed', project: "/fixtures/project with ' spaces", status: 'failure', platforms: ['windows'], results: { windows: { success: false, error: 'compiler unavailable' } }, recordedAt: 1788954600000, finishedAt: null, log: '/fixtures/failed.log', error: null },
-      { id: 'passed', project: '/fixtures/airdata', status: 'success', platforms: ['linux'], results: { linux: { success: true } }, recordedAt: 1788954000000, finishedAt: null, log: '/fixtures/passed.log', error: null },
-      { id: 'unregistered', project: '/fixtures/another', status: 'success', platforms: ['macos'], results: { macos: { success: true } }, recordedAt: 1788953000000, finishedAt: null, log: null, error: null },
+      { id: 'failed', project: "/fixtures/project with ' spaces", status: 'failure', action: 'build', platforms: ['windows'], results: { windows: { success: false, error: 'compiler unavailable' } }, recordedAt: 1788954600000, finishedAt: null, log: '/fixtures/failed.log', error: null },
+      { id: 'passed', project: '/fixtures/airdata', status: 'success', action: 'build', platforms: ['linux'], results: { linux: { success: true } }, recordedAt: 1788954000000, finishedAt: null, log: '/fixtures/passed.log', error: null },
+      { id: 'unregistered', project: '/fixtures/another', status: 'success', action: 'build', platforms: ['macos'], results: { macos: { success: true } }, recordedAt: 1788953000000, finishedAt: null, log: null, error: null },
     ]));
   });
   await page.getByRole('button', { name: '대시보드', exact: true }).click();
@@ -64,4 +64,43 @@ test('empty and unreadable history are shown without invented successful builds'
   await page.getByRole('button', { name: '빌드 기록 새로고침', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('test history cannot be read');
   await expect(page.locator('.count-success strong')).toHaveText('—개');
+});
+
+test('workflow replay records are labelled and expose each step output', async ({ page }) => {
+  await desktopMock(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: '프로젝트 추가', exact: true }).click();
+  await page.evaluate(() => {
+    sessionStorage.setItem('fixture-build-history', JSON.stringify([
+      {
+        id: '20260101-120000-000000', project: "/fixtures/project with ' spaces", status: 'passed_with_limits',
+        action: 'ci', platforms: ['linux'], recordedAt: 1788954600000, finishedAt: null,
+        log: '/fixtures/replay.log', error: null,
+        source: { revision: 'abc123def456789', dirty: false, workflowPath: '.github/workflows/release.yml', event: 'workflow_dispatch' },
+        results: {
+          linux: {
+            success: true, status: 'passed_with_limits', finishedAt: '2026-01-01T12:10:00Z',
+            log: '/fixtures/replay-linux.log', limits: ['Local CI never signs, notarizes or uploads to GitHub.'],
+            stages: {
+              setup: { status: 'passed', steps: [{ index: 1, name: 'actions/checkout@v4', adapter: 'checkout', status: 'passed', localAdapter: true }] },
+              test: { status: 'passed', steps: [{ index: 2, name: 'unit tests', adapter: 'run', status: 'passed', exitCode: 0, command: 'pnpm test', output: 'Ran 12 tests\nOK\n' }] },
+            },
+          },
+        },
+      },
+    ]));
+  });
+  await page.getByRole('button', { name: '대시보드', exact: true }).click();
+  await expect(page.locator('.replay-badge')).toHaveText('워크플로 재현');
+  await expect(page.locator('.history-platforms')).toContainText('.github/workflows/release.yml');
+  await expect(page.locator('.step-name').first()).toBeHidden();
+  await page.locator('.history-detail > summary').click();
+  await expect(page.locator('.step-name').first()).toHaveText('actions/checkout@v4');
+  await expect(page.locator('.step-output')).toBeHidden();
+  await page.locator('.step-row > summary').click();
+  await expect(page.locator('.step-output')).toBeVisible();
+  await expect(page.locator('.step-output')).toContainText('Ran 12 tests');
+  await expect(page.locator('.step-command')).toContainText('pnpm test');
+  await expect(page.locator('.step-limits li')).toContainText('never signs');
+  await page.screenshot({ path: '../.state/gui-browser-replay.png' });
 });

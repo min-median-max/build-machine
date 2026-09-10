@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import plistlib
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 
@@ -124,6 +126,53 @@ def _step_env(base, values):
     return env, limits
 
 
+class StepOutput:
+    """A finished step: its exit code and its combined output."""
+
+    def __init__(self, returncode, output):
+        self.returncode = returncode
+        self.output = output
+
+
+def _stream(args, cwd, env, timeout):
+    """Run a step, echoing its output as it appears and returning it as well.
+
+    A workflow runner shows a step's output while the step runs. Buffering a
+    multi-minute compile until it exits hides the only progress signal there
+    is, both from the terminal and from the desktop app's log panel.
+    """
+    captured = []
+    expired = []
+
+    def expire():
+        expired.append(True)
+        # A step runs through a shell, so its real work is a grandchild holding
+        # the same pipe. Killing only the shell leaves the read blocked until
+        # that grandchild finishes, which defeats the timeout entirely.
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except OSError:
+            process.kill()
+
+    with subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          start_new_session=True) as process:
+        timer = threading.Timer(timeout, expire)
+        timer.start()
+        try:
+            for line in iter(process.stdout.readline, b''):
+                text = line.decode('utf-8', errors='replace')
+                captured.append(text)
+                print(text, end='', flush=True)
+            code = process.wait()
+        finally:
+            timer.cancel()
+    output = ''.join(captured)
+    if expired:
+        raise subprocess.TimeoutExpired(args, timeout, output=output)
+    return StepOutput(code, output)
+
+
 def _run_workflow_command(step, source, env, timeout=1800):
     command_text = str(step.get('run') or '').strip()
     if not command_text:
@@ -131,13 +180,8 @@ def _run_workflow_command(step, source, env, timeout=1800):
     working = source / str(step.get('working-directory') or '.')
     working = working.resolve()
     working.relative_to(source.resolve())
-    result = subprocess.run(['/bin/sh', '-eu', '-c', command_text], cwd=working, env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
-    if result.stdout:
-        print(result.stdout, end='', flush=True)
-    if result.stderr:
-        print(result.stderr, end='', file=sys.stderr, flush=True)
-    return result
+    print('> ' + command_text, flush=True)
+    return _stream(['/bin/sh', '-eu', '-c', command_text], working, env, timeout)
 
 
 def _condition_enabled(step):
@@ -175,11 +219,7 @@ def _workflow_tauri_action(step, source, request, tools, env):
     if args:
         command_args.extend(args.split())
     print('> ' + ' '.join(command_args), flush=True)
-    result = subprocess.run(command_args, cwd=source, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=3600)
-    if result.stdout:
-        print(result.stdout, end='', flush=True)
-    if result.stderr:
-        print(result.stderr, end='', file=sys.stderr, flush=True)
+    result = _stream(command_args, source, env, 3600)
     if result.returncode:
         raise RuntimeError(f"Tauri action failed with exit code {result.returncode}.")
     output = source / 'src-tauri' / 'target' / target / 'release'
@@ -285,15 +325,16 @@ def ci_run(request, tools):
                     report['commands'].append({'stage': stage, 'command': result['command'], 'workingDirectory': step.get('working-directory') or '.'})
                     try:
                         completed = _run_workflow_command(step, source, env, timeout={'test': 1800, 'build': 3600, 'smoke': 600}.get(stage, 900))
-                        result.update(status='passed' if completed.returncode == 0 else 'failed', exitCode=completed.returncode,
-                                      stdout=completed.stdout, stderr=completed.stderr)
+                        # `output` is the step's interleaved stdout and stderr,
+                        # the order a reader actually needs to diagnose it.
+                        result.update(status='passed' if completed.returncode == 0 else 'failed',
+                                      exitCode=completed.returncode, output=completed.output)
                         if completed.returncode:
                             stage_result['status'] = 'failed'
                             stage_result['error'] = f"step {step.get('index')} exited with {completed.returncode}"
                     except subprocess.TimeoutExpired as error:
-                        stdout = error.stdout.decode(errors='replace') if isinstance(error.stdout, bytes) else (error.stdout or '')
-                        stderr = error.stderr.decode(errors='replace') if isinstance(error.stderr, bytes) else (error.stderr or '')
-                        result.update(status='timeout', timeoutSeconds={'test': 1800, 'build': 3600, 'smoke': 600}.get(stage, 900), stdout=stdout, stderr=stderr)
+                        output = error.output.decode(errors='replace') if isinstance(error.output, bytes) else (error.output or '')
+                        result.update(status='timeout', timeoutSeconds={'test': 1800, 'build': 3600, 'smoke': 600}.get(stage, 900), output=output)
                         stage_result['status'] = 'failed'
                         stage_result['error'] = f"step {step.get('index')} timed out"
                 else:

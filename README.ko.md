@@ -61,7 +61,7 @@ python3 winbuild.py run ~/Work/airdata
 
 프로젝트 디렉터리만 바꿔 같은 명령을 사용합니다. `winbuild.py --vm NAME`은 다른 Windows VM을 선택하며 공통 제어 명령은 `machine.json`을 사용합니다. 사용자 지정 프로젝트는 `build`에 `--framework custom --command 'BUILD COMMAND' --artifact 'RELATIVE/PATH'`를 전달합니다. 지정한 명령은 해당 프로젝트의 소스 스냅샷에서 선택한 플랫폼의 셸을 사용해 데스크톱 사용자 권한으로 실행합니다.
 
-전송에는 `WindowsBuildMachine`이라는 읽기 전용 Parallels 공유 폴더를 사용합니다. 제어 스크립트도 Windows에 복사하므로 Windows PowerShell에서 직접 열어보고 실행할 수 있습니다. 맥의 전송 파일·실행 기록·로그는 Git에서 제외한 `.state/`에 있습니다. Windows의 프로젝트와 빌드 기록은 `C:\BuildMachine\projects`에 있습니다. MSVC는 `C:\BuildTools`, 사용자 도구는 `%LOCALAPPDATA%\WindowsBuildMachine`에 설치합니다.
+전송에는 `WindowsBuildMachine`이라는 읽기 전용 Parallels 공유 폴더를 사용합니다. 제어 스크립트도 Windows에 복사하므로 Windows PowerShell에서 직접 열어보고 실행할 수 있습니다. 맥의 전송 파일·실행 기록·로그는 Git에서 제외한 `.state/`에 있습니다. 각 실행은 `.state/runs/<run>/report.json`에, 그 로그는 `.state/logs/<run>-*.log`에 기록하며 [machine.json](machine.json)의 `retention` 정책이 기간·프로젝트별 개수·전체 용량으로 둘을 함께 제한하고 오래된 실행부터 지웁니다. Windows의 프로젝트와 빌드 기록은 `C:\BuildMachine\projects`에 있습니다. MSVC는 `C:\BuildTools`, 사용자 도구는 `%LOCALAPPDATA%\WindowsBuildMachine`에 설치합니다.
 
 Linux는 같은 공유 폴더를 `/media/psf/WindowsBuildMachine`에서 읽습니다. Linux와 macOS는 관리하는 사용자 도구를 `~/.local/share/build-machine`에, 빌드 기록을 `~/.local/state/build-machine/PROJECT_KEY/latest.json`에 보관합니다. 네이티브 준비 명령은 시스템 기본 Node.js와 Go 설치를 보존합니다. Ubuntu의 Tauri 빌드는 ARM64 실행 파일과 `.deb`를 만들지만, 패키지 생성이 시스템 패키지 설치까지 검증한 것은 아닙니다. Workflow 재현은 서명하지 않은 로컬 패키징과 로컬 산출물·릴리즈 어댑터를 검증하며 서명·공증·GitHub 업로드·상태 보고는 명시적으로 미검증으로 기록합니다.
 

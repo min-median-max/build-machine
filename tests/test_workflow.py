@@ -68,6 +68,41 @@ jobs:
         with self.assertRaisesRegex(workflow.WorkflowError, 'test 단계'):
             workflow.load(path)
 
+    def test_checkout_does_not_satisfy_the_test_gate(self):
+        """An action's own name must never stand in for a test command."""
+        root, path = self.workflow_file('''name: release
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: tauri-apps/tauri-action@v0
+''')
+        with self.assertRaisesRegex(workflow.WorkflowError, 'test 단계'):
+            workflow.load(path)
+
+    def test_action_steps_are_classified_by_adapter_not_by_name(self):
+        root, path = self.workflow_file('''# build-machine: skip test reason=fixture
+# build-machine: skip smoke reason=fixture
+name: release
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore build cache
+        uses: actions/cache@v4
+      - uses: tauri-apps/tauri-action@v0
+      - uses: actions/upload-artifact@v4
+''')
+        stages = workflow.stage_steps(workflow.load(path))
+        self.assertEqual([step['adapter'] for step in stages['setup']], ['checkout', 'cache'])
+        self.assertEqual([step['adapter'] for step in stages['build']], ['tauri-build'])
+        self.assertEqual([step['adapter'] for step in stages['release']], ['artifact-upload'])
+        self.assertEqual([step['adapter'] for step in stages['test']], ['skip'])
+
     def test_ref_archive_is_clean_and_does_not_include_worktree_edits(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
