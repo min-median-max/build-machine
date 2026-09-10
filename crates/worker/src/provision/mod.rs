@@ -102,16 +102,16 @@ impl Tools {
     }
 
     pub fn cargo_bin(&self) -> PathBuf {
-        home_directory().map(|home| home.join(".cargo/bin")).unwrap_or_default()
+        home_directory().map(|home| home.join(".cargo").join("bin")).unwrap_or_default()
     }
 
     fn managed_paths(&self, home: &Path) -> Vec<PathBuf> {
         let mut paths = vec![
             if self.platform == Platform::Windows { self.node_directory() } else { self.node_directory().join("bin") },
             self.pnpm_directory().join("bin"),
-            self.go_directory().join("go/bin"),
+            self.go_directory().join("go").join("bin"),
             self.cargo_bin(),
-            home.join("go/bin"),
+            home.join("go").join("bin"),
         ];
         if self.platform == Platform::Windows {
             paths[1] = self.pnpm_directory();
@@ -222,7 +222,7 @@ pub fn home_directory() -> Result<PathBuf> {
 fn managed_root(home: &Path, platform: Platform) -> PathBuf {
     match platform {
         Platform::Windows => home.join("AppData/Local/WindowsBuildMachine"),
-        _ => home.join(".local/share/build-machine"),
+        _ => home.join(".local").join("share").join("build-machine"),
     }
 }
 
@@ -231,7 +231,7 @@ pub fn workspace() -> Result<PathBuf> {
     let home = home_directory()?;
     Ok(match Platform::host()? {
         Platform::Windows => PathBuf::from("C:\\BuildMachine\\projects"),
-        _ => home.join(".local/state/build-machine"),
+        _ => home.join(".local").join("state").join("build-machine"),
     })
 }
 

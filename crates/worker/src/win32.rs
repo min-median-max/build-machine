@@ -64,6 +64,19 @@ pub fn read_string(hive: HKEY, key: &str, name: &str) -> Option<String> {
     }
 }
 
+/// The product name as a person would recognise it.
+///
+/// The registry's `ProductName` still reads "Windows 10" on Windows 11, so the
+/// build number decides. PowerShell reached the corrected name through WMI;
+/// this avoids taking a WMI dependency for one display field.
+pub fn product_name() -> Option<String> {
+    const CURRENT_VERSION: &str = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+    let name = read_string(HKLM, CURRENT_VERSION, "ProductName")?;
+    let build: u32 =
+        read_string(HKLM, CURRENT_VERSION, "CurrentBuildNumber").and_then(|value| value.parse().ok()).unwrap_or(0);
+    Some(if build >= 22000 { name.replace("Windows 10", "Windows 11") } else { name })
+}
+
 /// The machine's real architecture, read from the registry so an emulated
 /// process does not report the architecture it is being emulated as.
 pub fn machine_architecture() -> Option<String> {
@@ -138,9 +151,15 @@ pub fn is_administrator() -> bool {
     }
 }
 
+/// Windows accepts either separator in a path, so two spellings of the same
+/// file must compare equal.
+fn normalize(path: &str) -> String {
+    path.replace('/', "\\").to_lowercase()
+}
+
 /// The process id whose image is exactly this executable, if one is running.
 pub fn process_with_image(executable: &Path) -> Option<u32> {
-    let wanted = executable.to_string_lossy().to_lowercase();
+    let wanted = normalize(&executable.to_string_lossy());
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot.is_null() {
@@ -152,7 +171,7 @@ pub fn process_with_image(executable: &Path) -> Option<u32> {
         if Process32FirstW(snapshot, &mut entry) != FALSE {
             loop {
                 if let Some(path) = image_path(entry.th32ProcessID) {
-                    if path.to_lowercase() == wanted {
+                    if normalize(&path) == wanted {
                         found = Some(entry.th32ProcessID);
                         break;
                     }

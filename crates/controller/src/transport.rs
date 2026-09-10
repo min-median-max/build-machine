@@ -24,8 +24,14 @@ pub trait Transport {
     /// Translate a path under the controller root into the worker's namespace.
     fn locate(&self, path: &Path) -> Result<String>;
     fn placement(&self) -> Result<Placement>;
-    /// Run the worker. Output is streamed to the log and to this process.
+    /// Run the worker as the signed-in desktop user.
     fn invoke(&self, arguments: &[String], log: &OperationLog) -> Result<String>;
+    /// Run the worker with the rights system-wide installation needs.
+    ///
+    /// Machine-wide prerequisites — MSVC, WebView2, apt packages — cannot be
+    /// installed by the desktop user, while builds and launches must run as
+    /// that user to reach their session. Only this step is elevated.
+    fn invoke_elevated(&self, arguments: &[String], log: &OperationLog) -> Result<String>;
 }
 
 /// The macOS worker, which runs on this machine.
@@ -59,6 +65,12 @@ impl Transport for Local {
         command.args(arguments).arg("--config").arg(&placement.config);
         stream_command(command, log)
     }
+
+    /// The macOS host has no separate elevated channel: Apple's own installer
+    /// asks for authorization when the worker opens it.
+    fn invoke_elevated(&self, arguments: &[String], log: &OperationLog) -> Result<String> {
+        self.invoke(arguments, log)
+    }
 }
 
 /// A worker inside a Parallels virtual machine, reached through `prlctl exec`.
@@ -91,6 +103,19 @@ impl Parallels {
             Platform::Windows => format!("{}\\{}", self.share_root(), relative.replace('/', "\\")),
             _ => format!("{}/{}", self.share_root(), relative),
         }
+    }
+
+    /// Without `--current-user`, `prlctl exec` runs as the guest's own
+    /// privileged account: SYSTEM on Windows, root on Linux.
+    fn exec(&self, arguments: &[String], log: &OperationLog, as_user: bool) -> Result<String> {
+        let placement = self.placement()?;
+        let mut command = Command::new(&self.prlctl);
+        command.arg("exec").arg(&self.vm);
+        if as_user {
+            command.arg("--current-user");
+        }
+        command.arg(&placement.worker).args(arguments).arg("--config").arg(&placement.config);
+        stream_command(command, log)
     }
 
     fn cli(&self, arguments: &[&str]) -> Result<String> {
@@ -159,11 +184,11 @@ impl Transport for Parallels {
     }
 
     fn invoke(&self, arguments: &[String], log: &OperationLog) -> Result<String> {
-        let placement = self.placement()?;
-        let mut command = Command::new(&self.prlctl);
-        command.arg("exec").arg(&self.vm).arg("--current-user").arg(&placement.worker);
-        command.args(arguments).arg("--config").arg(&placement.config);
-        stream_command(command, log)
+        self.exec(arguments, log, true)
+    }
+
+    fn invoke_elevated(&self, arguments: &[String], log: &OperationLog) -> Result<String> {
+        self.exec(arguments, log, false)
     }
 }
 

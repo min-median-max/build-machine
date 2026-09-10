@@ -141,17 +141,26 @@ fn desktop_environment(tools: &Tools) -> Vec<(String, String)> {
     environment
 }
 
+/// Launch the application so it outlives this worker.
+///
+/// The controller reaches the guest through `prlctl exec`, which does not
+/// return until the process tree it started has emptied. A launched
+/// application is meant to keep running, so it must not be in that tree.
+/// Creating it detached is not enough — it stays in the job object the remote
+/// execution placed it in — so the shell is asked to start it, exactly as a
+/// person double-clicking it would. The shell already runs outside that job.
+///
+/// Linux reaches the same place with `setsid`.
 #[cfg(target_os = "windows")]
 fn start(_receipt: &Receipt, executable: &Path, tools: &Tools) -> Result<()> {
-    let mut command = Command::new(executable);
-    if let Some(parent) = executable.parent() {
-        command.current_dir(parent);
-    }
-    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    let mut command = Command::new("explorer.exe");
+    command.arg(executable).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     for (key, value) in &tools.environment {
         command.env(key, value);
     }
-    command.spawn()?;
+    // `explorer.exe` hands off and exits, so its own status says nothing about
+    // the application. The process check below is what establishes the launch.
+    let _ = command.status();
     Ok(())
 }
 

@@ -4,7 +4,7 @@
 //! a limit. A local success never establishes production signing, notarization
 //! or release publication.
 
-use crate::build::{collect_artifacts, extract_source, project_root, shell_for};
+use crate::build::{collect_artifacts, development_bundle, extract_source, project_root, shell_for};
 use crate::provision::Tools;
 use crate::stream;
 use anyhow::{bail, Result};
@@ -89,23 +89,19 @@ fn tauri_action(step: &Step, source: &Path, request: &WorkRequest, environment: 
     let program = if cfg!(windows) { format!("{manager}.cmd") } else { manager.to_owned() };
     let working = working_directory(source, step)?;
     stream::checked(&program, &install, Some(&working), environment)?;
-    let bundle = request.bundle.clone().unwrap_or_else(|| "none".to_owned());
     let mut arguments = base;
-    arguments.extend([
-        "--ci".to_owned(),
-        "--no-sign".to_owned(),
-        "--target".to_owned(),
-        request.target.clone(),
-        "--bundles".to_owned(),
-        bundle,
-        "--".to_owned(),
-        "--locked".to_owned(),
-    ]);
+    arguments.extend(["--ci".to_owned(), "--no-sign".to_owned(), "--target".to_owned(), request.target.clone()]);
+    match request.bundle.clone() {
+        Some(bundle) => arguments.extend(["--bundles".to_owned(), bundle]),
+        None => arguments.extend(development_bundle()),
+    }
     if let Some(extra) = step.with.get("args") {
         arguments.extend(extra.split_whitespace().map(str::to_owned));
     }
+    arguments.extend(["--".to_owned(), "--locked".to_owned()]);
     stream::checked(&program, &arguments, Some(source), environment)?;
-    let output = source.join(format!("src-tauri/target/{}/release/bundle", request.target));
+    let output =
+        source.join("src-tauri").join("target").join(&request.target).join("release").join("bundle");
     let mut artifacts = Vec::new();
     for extension in ["dmg", "deb", "exe", "msi"] {
         artifacts.extend(collect_artifacts(&output, extension)?);

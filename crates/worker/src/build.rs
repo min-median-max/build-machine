@@ -200,21 +200,29 @@ struct Produced {
     architectures: String,
 }
 
-/// The bundle a development build asks for, and the package extension a
-/// release rehearsal collects. A worker is built for one platform, so these
-/// are compile-time facts rather than runtime branches.
-#[cfg(target_os = "macos")]
-const DEVELOPMENT_BUNDLE: &str = "app";
+/// The package extension a release rehearsal collects. A worker is built for
+/// one platform, so this is a compile-time fact rather than a runtime branch.
 #[cfg(target_os = "macos")]
 const PACKAGE_EXTENSION: &str = "dmg";
 #[cfg(target_os = "linux")]
-const DEVELOPMENT_BUNDLE: &str = "deb";
-#[cfg(target_os = "linux")]
 const PACKAGE_EXTENSION: &str = "deb";
 #[cfg(target_os = "windows")]
-const DEVELOPMENT_BUNDLE: &str = "none";
-#[cfg(target_os = "windows")]
 const PACKAGE_EXTENSION: &str = "exe";
+
+/// What a development build asks Tauri to produce.
+///
+/// macOS needs the `.app`, because that is what a launch opens. Windows takes
+/// no bundle at all: the executable is the artifact, and `--bundles` has no
+/// value there that means "none".
+pub fn development_bundle() -> Vec<String> {
+    if cfg!(target_os = "macos") {
+        vec!["--bundles".to_owned(), "app".to_owned()]
+    } else if cfg!(target_os = "linux") {
+        vec!["--bundles".to_owned(), "deb".to_owned()]
+    } else {
+        vec!["--no-bundle".to_owned()]
+    }
+}
 
 #[cfg(target_os = "macos")]
 fn tauri_output(
@@ -268,32 +276,23 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
 
     match framework {
         Framework::Tauri => {
-            if !source.join("src-tauri/Cargo.lock").is_file() {
+            if !source.join("src-tauri").join("Cargo.lock").is_file() {
                 bail!("Tauri builds require src-tauri/Cargo.lock.");
             }
             let (manager, install, base) = package_manager(&source)?;
             let program = executable_name(manager);
             stream::checked(&program, &install, Some(&source), &environment)?;
             commands.push(format!("{program} {}", install.join(" ")));
-            let bundle = if release {
-                tools.profile()?.bundle.clone().unwrap_or_else(|| DEVELOPMENT_BUNDLE.to_owned())
-            } else {
-                DEVELOPMENT_BUNDLE.to_owned()
-            };
             let mut arguments = base.clone();
-            arguments.extend([
-                "--ci".to_owned(),
-                "--no-sign".to_owned(),
-                "--target".to_owned(),
-                target.clone(),
-                "--bundles".to_owned(),
-                bundle,
-                "--".to_owned(),
-                "--locked".to_owned(),
-            ]);
+            arguments.extend(["--ci".to_owned(), "--no-sign".to_owned(), "--target".to_owned(), target.clone()]);
+            match (release, tools.profile()?.bundle.clone()) {
+                (true, Some(bundle)) => arguments.extend(["--bundles".to_owned(), bundle]),
+                _ => arguments.extend(development_bundle()),
+            }
+            arguments.extend(["--".to_owned(), "--locked".to_owned()]);
             stream::checked(&program, &arguments, Some(&source), &environment)?;
             commands.push(format!("{program} {}", arguments.join(" ")));
-            let output = source.join(format!("src-tauri/target/{target}/release"));
+            let output = source.join("src-tauri").join("target").join(&target).join("release");
             let produced = tauri_output(&source, &output, request.artifact.as_deref(), &environment, &target)?;
             executable = produced.executable;
             app = produced.app;

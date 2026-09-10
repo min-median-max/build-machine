@@ -161,6 +161,13 @@ fn execute_platform(
 ) -> Result<PlatformResult> {
     let transport = transport(operation, platform)?;
     transport.prepare()?;
+    // System-wide prerequisites need rights the desktop user does not have, so
+    // that step runs on its own before the work the desktop user must do.
+    if matches!(operation.action, Action::Setup | Action::Build | Action::Release | Action::Ci)
+        && platform != Platform::Macos
+    {
+        transport.invoke_elevated(&["setup-system".to_owned()], log)?;
+    }
     let request = match snapshot {
         Some(snapshot) => Some(write_request(operation, platform, snapshot, stages, transport.as_ref(), state)?.1),
         None => None,

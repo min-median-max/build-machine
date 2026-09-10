@@ -119,7 +119,7 @@ pub fn setup_user(tools: &Tools) -> Result<()> {
     std::fs::create_dir_all(&tools.root)?;
 
     let node = tools.node_directory();
-    if node.join("bin/node").exists() {
+    if node.join("bin").join("node").exists() {
         println!("OK: declared Node.js already installed. No installation.");
     } else {
         let url = profile.node_url.clone().context("machine.json에 nodeUrl이 없어요.")?;
@@ -134,7 +134,7 @@ pub fn setup_user(tools: &Tools) -> Result<()> {
     }
 
     let pnpm = tools.pnpm_directory();
-    if pnpm.join("bin/pnpm").exists() {
+    if pnpm.join("bin").join("pnpm").exists() {
         println!("OK: declared pnpm already installed. No installation.");
     } else {
         let arguments = vec![
@@ -144,7 +144,7 @@ pub fn setup_user(tools: &Tools) -> Result<()> {
             "--prefix".to_owned(),
             pnpm.to_string_lossy().into_owned(),
         ];
-        stream::checked(&node.join("bin/npm").to_string_lossy(), &arguments, None, &tools.environment)?;
+        stream::checked(&node.join("bin").join("npm").to_string_lossy(), &arguments, None, &tools.environment)?;
     }
 
     let rustup = tools.cargo_bin().join("rustup");
@@ -213,7 +213,7 @@ pub fn setup_user(tools: &Tools) -> Result<()> {
     }
 
     let go = tools.go_directory();
-    if go.join("go/bin/go").exists() {
+    if go.join("go").join("bin").join("go").exists() {
         println!("OK: declared Go already installed. No installation.");
     } else {
         let url = profile.go_url.clone().context("machine.json에 goUrl이 없어요.")?;

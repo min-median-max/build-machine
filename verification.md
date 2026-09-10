@@ -11,21 +11,39 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 
 ## Rust rewrite
 
-The rewrite passes `cargo test --workspace` (40 tests) and `cargo clippy --workspace --all-targets -- -D warnings` on the macOS host, `pnpm --dir gui run build`, and `pnpm --dir gui test` (14 browser tests). The worker compiles cleanly for `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu` and `aarch64-pc-windows-msvc`.
+The rewrite passes `cargo test --workspace` (40 tests) and `cargo clippy --workspace --all-targets -- -D warnings` on the macOS host, `pnpm --dir gui run build`, and `pnpm --dir gui test` (14 browser tests). The worker compiles with no warnings for `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu` and `aarch64-pc-windows-msvc`.
 
-Exercised for real on this Mac:
+### Exercised against the actual virtual machines
 
-- `build-machine doctor --os macos` reported `ready: true` against the actual installed toolchain, through the real worker binary.
-- `build-machine ci validate ~/Work/airdata --workflow .github/workflows/release-macos.yml` rejects that workflow for the missing **test** gate, matching the corrected contract: `actions/checkout` no longer stands in for a test step.
-- The operation log a successful run points at contains the run summary and the location of each platform's command output.
+Guests: `Windows 11` (Windows 11 Pro ARM64) and `Ubuntu 26.04 ARM64`, both running with a desktop user signed in. Project: `/Users/maxkwon/Work/airdata`, revision `c798dc27c569fdcd4ab83a6dad5722ab739f41f0`, source hash `39a73fa25283aabe62c239a5ff870ac19435a9868ea9e911b689dfe6d1e04eef`.
 
-**Not exercised. Nothing below has been run and none of it should be read as working:**
+- `cargo xtask worker --os windows linux` built each guest worker inside its own virtual machine and returned it. Cargo reads the workspace straight from the read-only share and writes only to a target directory in the guest, so nothing is copied in.
+- `doctor` passed on all three environments, both individually and as one matrix. Windows reported `Windows 11 Pro`, `ARM64`, MSVC `17.14.37628.2` and WebView2 `152.0.4191.66` — the registry reads, the vswhere query and the architecture check are the new direct Win32 calls.
+- `build` passed on Windows, Ubuntu and macOS. Ubuntu produced the ARM64 executable and `data_0.1.0_arm64.deb`; macOS produced a genuine universal application, `lipo -archs` reporting `x86_64 arm64`. Repeating the Ubuntu build reported `REUSED BUILD` with an unchanged executable checksum.
+- `run` passed on Windows and Ubuntu, and repeating it reused the running process. On Windows the window checks reported the title `data` and `responding: true`; `.state/…/windows-app.png` shows the application rendering its Korean board screen.
+- `ci validate` rejects `airdata/.github/workflows/release-macos.yml` for the missing **test** gate, matching the corrected contract: `actions/checkout` no longer stands in for a test step.
+- One matrix build recorded Ubuntu as failed with `PrlJob_GetResult: Invalid argument`. The identical command succeeded when repeated, and two further controller runs passed. This is the intermittent Parallels 27.0.1 execution failure recorded below; the run reported it rather than retrying, which is the intended behaviour.
 
-- Every Windows and Ubuntu guest path: diagnosis, provisioning, build, launch and workflow replay. All of it is new code reaching a virtual machine that has not been started against it.
-- Windows provisioning in particular. MSVC installation, Authenticode verification, the registry reads and writes, the PATH broadcast and the window checks moved from .NET wrappers to direct Win32 calls, and only an actual Windows ARM64 machine can show whether they behave.
+### Defects this exercise found and fixed
+
+Every one of these was found by running the code, not by reading it:
+
+- The machine/user privilege split had not been carried over. System-wide installation needs rights the desktop user does not have, so the controller now runs `setup-system` elevated — as SYSTEM on Windows, root on Linux — before the work the desktop user must do. Elevation is required only when something actually has to be installed.
+- A launched Windows application stayed inside the job object `prlctl exec` creates, so the controller waited for the application to exit and never returned. The launch is handed to the shell, exactly as double-clicking would, which is where PowerShell's `Start-Process` had been going. Linux reaches the same place with `setsid`.
+- Paths were built by joining strings containing `/`, producing mixed separators on Windows. The shell would not launch such a path and the running-process match could not compare equal to it.
+- `--bundles none` is not a value Tauri accepts on Windows; a development build there takes `--no-bundle`.
+- `prlctl exec` does not preserve argument quoting — it joins what it is given and the guest re-parses — so a multi-statement script was split at its first `;`. Every guest step is now one plain command.
+- The guest build copied the whole share, including `.git`, into a 1.7 GB tmpfs and exhausted it; the copy also preserved the share's read-only permissions, leaving files that could not be removed.
+- The registry's `ProductName` still reads "Windows 10" on Windows 11, so the diagnosis reported the wrong system. The build number decides now.
+
+### Not exercised
+
+- Workflow replay (`ci run`) on any platform. Only `ci validate` has been run.
+- `release`, and any installer or package acceptance.
 - The release workflow. It has never run; no runner has built a worker and no application has been assembled from one.
-- `cargo xtask worker --os windows linux`, which builds a guest worker inside its virtual machine.
 - The rebuilt macOS application bundle, its sidecar staging and the dashboard rendering natively.
+- Visible rendering on Ubuntu. The process launch and reuse were verified, but the guest screen was locked, so the window itself was not seen.
+- Provisioning that actually installs something. Every environment already satisfied `machine.json`, so the installation paths — MSVC, WebView2, apt, the managed toolchains — reported "no installation" and did not run.
 
 ## Defect fixes
 

@@ -18,7 +18,7 @@ const WEBVIEW2_INSTALLER: &str = "https://go.microsoft.com/fwlink/p/?LinkId=2124
 fn vswhere() -> PathBuf {
     let program_files =
         std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_owned());
-    PathBuf::from(program_files).join("Microsoft Visual Studio/Installer/vswhere.exe")
+    PathBuf::from(program_files).join("Microsoft Visual Studio").join("Installer").join("vswhere.exe")
 }
 
 /// The installed MSVC version, but only when every declared component is
@@ -69,11 +69,7 @@ pub fn webview2_version() -> Option<String> {
 pub fn doctor(tools: &Tools) -> Result<Diagnosis> {
     let mut diagnosis = Diagnosis {
         platform: tools.platform,
-        os_version: win32::read_string(
-            win32::HKLM,
-            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
-            "ProductName",
-        ),
+        os_version: win32::product_name(),
         architecture: win32::machine_architecture().unwrap_or_else(|| std::env::consts::ARCH.to_owned()),
         tools: BTreeMap::new(),
         missing: Vec::new(),
@@ -128,15 +124,23 @@ fn verify_microsoft_signature(path: &Path) -> Result<()> {
 }
 
 pub fn setup_machine(tools: &Tools) -> Result<()> {
-    if !win32::is_administrator() {
-        bail!("Run machine setup with administrator rights.");
-    }
     if win32::machine_architecture().as_deref() != Some("ARM64") {
         bail!("This machine definition requires Windows ARM64.");
     }
+    let msvc = msvc_version(tools);
+    let webview2 = webview2_version();
+    if msvc.is_some() && webview2.is_some() {
+        println!("OK: machine-wide prerequisites present. No installation.");
+        return Ok(());
+    }
+    // Elevation is only required to install. A run that has nothing to do
+    // succeeds as the desktop user, which is what makes repeating it cheap.
+    if !win32::is_administrator() {
+        bail!("Run machine setup with administrator rights.");
+    }
     let downloads = PathBuf::from(&tools.machine.windows_root).join("downloads");
 
-    match msvc_version(tools) {
+    match msvc {
         Some(version) => println!("OK: MSVC {version}, required components present. No installation."),
         None => {
             let installer = downloads.join("vs_BuildTools.exe");
@@ -166,7 +170,7 @@ pub fn setup_machine(tools: &Tools) -> Result<()> {
         }
     }
 
-    match webview2_version() {
+    match webview2 {
         Some(version) => println!("OK: WebView2 {version}. No installation."),
         None => {
             let installer = downloads.join("MicrosoftEdgeWebview2Setup.exe");
@@ -270,7 +274,7 @@ pub fn setup_user(tools: &Tools) -> Result<()> {
     }
 
     let go = tools.go_directory();
-    if go.join("go/bin/go.exe").exists() {
+    if go.join("go").join("bin").join("go.exe").exists() {
         println!("OK: declared Go already installed. No installation.");
     } else {
         let archive = tools.download(&machine.go.url, &machine.go.sha256, &format!("go-{}.zip", machine.go.version))?;
@@ -280,7 +284,7 @@ pub fn setup_user(tools: &Tools) -> Result<()> {
     }
 
     let git = tools.git_directory();
-    if git.join("cmd/git.exe").exists() {
+    if git.join("cmd").join("git.exe").exists() {
         println!("OK: declared Git already installed. No installation.");
     } else {
         let installer = tools.download(&machine.git.url, &machine.git.sha256, &format!("git-{}.exe", machine.git.version))?;
@@ -316,10 +320,10 @@ fn update_user_path(tools: &Tools) -> Result<()> {
     let managed = vec![
         tools.node_directory(),
         tools.pnpm_directory(),
-        tools.go_directory().join("go/bin"),
+        tools.go_directory().join("go").join("bin"),
         tools.git_directory().join("cmd"),
         tools.cargo_bin(),
-        super::home_directory()?.join("go/bin"),
+        super::home_directory()?.join("go").join("bin"),
     ];
     let existing = win32::read_string(win32::HKCU, "Environment", "Path").unwrap_or_default();
     let mut parts: Vec<String> =
