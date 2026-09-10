@@ -36,12 +36,24 @@ Every one of these was found by running the code, not by reading it:
 - The guest build copied the whole share, including `.git`, into a 1.7 GB tmpfs and exhausted it; the copy also preserved the share's read-only permissions, leaving files that could not be removed.
 - The registry's `ProductName` still reads "Windows 10" on Windows 11, so the diagnosis reported the wrong system. The build number decides now.
 
+### The application bundle
+
+`cargo xtask build` produced `Build Machine.app`. It carries the macOS worker as a signed-eligible sidecar in `Contents/MacOS` (`lipo -archs`: `x86_64 arm64`) and the Windows, Ubuntu and macOS workers plus `machine.json` as resources.
+
+- The application launched and rendered its dashboard natively, showing the recorded runs, their platforms and the per-stage step output.
+- Copied outside the workspace and launched, it placed its bundled payload into `~/Library/Application Support/local.buildmachine.desktop/machine` — machine definition and all three workers — because the bundle cannot be written to and cannot be shared into a virtual machine.
+- The controller then passed `doctor --os macos` against that seeded directory using only the bundled worker. A released application does not need this checkout.
+
+Two defects were found and fixed here: the bundled payload was shipped but never used, because the application fell back to guessing `~/Work/build-machine`, and `xtask` did not pass its toolchain down to Tauri's own CLI, which shells out to `cargo`. `universal-apple-darwin` is a Tauri bundling target rather than one rustc builds, so the macOS worker is compiled per architecture and joined, as the release runner does.
+
+Fifteen run records written by the removed Python implementation were deleted. The current reader cannot parse them and reported them as unreadable on every refresh; there is no compatibility path for them, and `verification.md` is where those runs are recorded.
+
 ### Not exercised
 
-- Workflow replay (`ci run`) on any platform. Only `ci validate` has been run.
+- Workflow replay (`ci run`) on any platform. Only `ci validate` has been run, and it fails closed on the only workflows available here: `airdata`'s has no test gate, and this repository's own uses a matrix and `actions/download-artifact`, neither of which has an adapter.
 - `release`, and any installer or package acceptance.
 - The release workflow. It has never run; no runner has built a worker and no application has been assembled from one.
-- The rebuilt macOS application bundle, its sidecar staging and the dashboard rendering natively.
+- Driving a guest from the seeded application directory. Only one directory can hold the named Parallels share, and repointing it would have taken the share away from this checkout.
 - Visible rendering on Ubuntu. The process launch and reuse were verified, but the guest screen was locked, so the window itself was not seen.
 - Provisioning that actually installs something. Every environment already satisfied `machine.json`, so the installation paths — MSVC, WebView2, apt, the managed toolchains — reported "no installation" and did not run.
 

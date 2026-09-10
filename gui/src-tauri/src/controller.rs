@@ -6,7 +6,8 @@
 
 use build_machine_controller::oplog::Stream;
 use build_machine_controller::{
-    controller_root as resolve_root, find_controller as locate, matrix, state_directory, Lock, Operation,
+    controller_root as resolve_root, find_controller as locate, matrix, seed_root, state_directory, Lock,
+    Operation,
 };
 use build_machine_core::config::Machine;
 use build_machine_core::report::{Action, ExecutionMode, RunReport};
@@ -57,8 +58,27 @@ pub fn controller_root(value: &str) -> Result<PathBuf, String> {
     resolve_root(Path::new(value)).map_err(|error| format!("{error:#}"))
 }
 
-pub fn find_controller() -> String {
-    locate().map(|path| path.to_string_lossy().into_owned()).unwrap_or_default()
+/// The payload a released application carries, if this is one.
+fn bundled_payload() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let resources = exe.parent()?.parent()?.join("Resources");
+    resources.join("machine.json").is_file().then_some(resources)
+}
+
+/// Where this application keeps the machine it drives.
+///
+/// A developer running from the workspace uses that workspace. A released
+/// application places its bundled payload beside its settings, because the
+/// bundle is read-only and a virtual machine has to be able to read the
+/// workers and source archives from a directory this application can write.
+pub fn find_controller(settings: &Path) -> String {
+    if let Some(root) = locate() {
+        return root.to_string_lossy().into_owned();
+    }
+    match bundled_payload().map(|payload| seed_root(&payload, &settings.join("machine"))) {
+        Some(Ok(root)) => root.to_string_lossy().into_owned(),
+        _ => String::new(),
+    }
 }
 
 /// A bundled application does not inherit a login shell's PATH, and `prlctl`

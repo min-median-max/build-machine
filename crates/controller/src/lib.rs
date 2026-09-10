@@ -58,14 +58,57 @@ pub fn controller_root(value: &Path) -> Result<PathBuf> {
 
 /// Find the controller directory from the running executable, so the desktop
 /// application and the command line agree on where state lives.
+///
+/// This finds the workspace a developer is running from. A released
+/// application carries its payload instead and calls [`seed_root`].
 pub fn find_controller() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    for ancestor in exe.ancestors() {
-        if ancestor.join("machine.json").is_file() {
-            return Some(ancestor.to_path_buf());
+    exe.ancestors().find(|ancestor| ancestor.join("machine.json").is_file()).map(Path::to_path_buf)
+}
+
+/// Prepare a writable controller root from a read-only payload.
+///
+/// A released application ships its machine definition and its worker binaries
+/// inside the bundle, which cannot be written to and cannot be shared into a
+/// virtual machine. They are placed once into a directory that can be both, and
+/// a payload that is already there is not replaced — the run records and source
+/// archives beside it belong to the person using it.
+pub fn seed_root(payload: &Path, root: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(root)?;
+    let definition = root.join("machine.json");
+    if !definition.is_file() {
+        std::fs::copy(payload.join("machine.json"), &definition)
+            .context("머신 정의를 배치하지 못했어요.")?;
+    }
+    let workers = root.join("workers");
+    std::fs::create_dir_all(&workers)?;
+    for entry in std::fs::read_dir(payload.join("workers")).context("번들에 워커가 없어요.")? {
+        let entry = entry?;
+        let destination = workers.join(entry.file_name());
+        // A worker is replaced whenever the bundle carries a different one, so
+        // updating the application updates what the guests run.
+        let same = std::fs::metadata(&destination)
+            .ok()
+            .zip(entry.metadata().ok())
+            .is_some_and(|(there, here)| there.len() == here.len());
+        if !same {
+            std::fs::copy(entry.path(), &destination)?;
+            set_executable(&destination)?;
         }
     }
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Work/build-machine"))
+    Ok(root.to_path_buf())
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 pub fn state_directory(root: &Path) -> PathBuf {

@@ -22,7 +22,9 @@ fn preference_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn load_preferences(app: tauri::AppHandle) -> Result<Preferences, String> {
-    preferences::load(&preference_path(&app)?, controller::find_controller())
+    let settings = preference_path(&app)?;
+    let directory = settings.parent().unwrap_or(&settings).to_path_buf();
+    preferences::load(&settings, controller::find_controller(&directory))
 }
 
 #[tauri::command]

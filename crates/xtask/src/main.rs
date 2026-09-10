@@ -52,17 +52,29 @@ pub fn root() -> Result<PathBuf> {
     manifest.ancestors().nth(2).map(Path::to_path_buf).context("워크스페이스 루트를 찾지 못했어요.")
 }
 
+/// Run a development command with a toolchain its children can find.
+///
+/// Tauri's own CLI shells out to `cargo`, so a PATH that reaches this task is
+/// not enough — the directory holding the toolchain has to be passed down.
 pub fn run(program: &str, arguments: &[&str], working: &Path) -> Result<()> {
     println!("> {program} {}", arguments.join(" "));
-    let status = Command::new(program)
-        .args(arguments)
-        .current_dir(working)
-        .status()
-        .with_context(|| format!("{program}을 실행하지 못했어요."))?;
+    let mut command = Command::new(program);
+    command.args(arguments).current_dir(working);
+    if let Some(bin) = toolchain_directory() {
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        command.env("PATH", format!("{bin}:{inherited}"));
+    }
+    let status = command.status().with_context(|| format!("{program}을 실행하지 못했어요."))?;
     if !status.success() {
         bail!("{program} failed with exit code {}.", status.code().unwrap_or(-1));
     }
     Ok(())
+}
+
+/// Where the cargo that started this task lives.
+fn toolchain_directory() -> Option<String> {
+    let cargo = PathBuf::from(workers::cargo());
+    cargo.parent().filter(|parent| !parent.as_os_str().is_empty()).map(|parent| parent.to_string_lossy().into_owned())
 }
 
 fn main() {
@@ -87,8 +99,9 @@ fn execute() -> Result<()> {
             run("pnpm", &["exec", "tauri", "dev"], &gui)
         }
         Task::Test => {
-            run("cargo", &["test", "--workspace", "--locked"], &root)?;
-            run("cargo", &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], &root)?;
+            let cargo = workers::cargo();
+            run(&cargo, &["test", "--workspace", "--locked"], &root)?;
+            run(&cargo, &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], &root)?;
             run("pnpm", &["install", "--frozen-lockfile"], &gui)?;
             run("pnpm", &["run", "build"], &gui)?;
             run("pnpm", &["exec", "playwright", "install", "chromium"], &gui)?;
