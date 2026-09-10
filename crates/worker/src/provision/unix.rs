@@ -61,6 +61,15 @@ pub fn doctor(tools: &Tools) -> Result<Diagnosis> {
     for (name, program, arguments, expected) in expected_versions(&tools.machine) {
         check_version(tools, &mut diagnosis, name, program, &arguments, &expected);
     }
+    #[cfg(target_os = "linux")]
+    if let Some(user) = tools.profile()?.desktop_user.clone() {
+        let present = crate::desktop::has_session(&user, &tools.environment);
+        diagnosis.tools.insert("desktop".to_owned(), present.then(|| format!("{user} signed in")));
+        if !present {
+            diagnosis.missing.push("desktop-session".to_owned());
+            diagnosis.issues.push(format!("desktop: no session for {user}; builds and launches cannot reach a display"));
+        }
+    }
     diagnosis.missing.sort();
     diagnosis.missing.dedup();
     diagnosis.ready = diagnosis.missing.is_empty();
@@ -71,7 +80,7 @@ pub fn setup_system(tools: &Tools) -> Result<()> {
     let missing = missing_system_packages(tools)?;
     if missing.is_empty() {
         println!("OK: native system dependencies present. No installation.");
-        return Ok(());
+        return ensure_desktop(tools);
     }
     if tools.platform == Platform::Macos {
         stream::checked("xcode-select", &["--install".to_owned()], None, &tools.environment).ok();
@@ -86,6 +95,28 @@ pub fn setup_system(tools: &Tools) -> Result<()> {
     let mut arguments = vec!["install".to_owned(), "-y".to_owned()];
     arguments.extend(missing);
     stream::checked("apt-get", &arguments, None, &environment)?;
+    ensure_desktop(tools)
+}
+
+/// A desktop session is as much a prerequisite as a compiler: without one,
+/// `--current-user` has nothing to attach to and every build fails to start.
+#[cfg(target_os = "linux")]
+fn ensure_desktop(tools: &Tools) -> Result<()> {
+    let Some(user) = tools.profile()?.desktop_user.clone() else {
+        return Ok(());
+    };
+    if unsafe { geteuid() } != 0 {
+        // Not elevated: report the state rather than pretending to fix it.
+        if !crate::desktop::has_session(&user, &tools.environment) {
+            bail!("No desktop session for {user}. The controller runs setup-system as root, which starts one.");
+        }
+        return Ok(());
+    }
+    crate::desktop::ensure_session(&user, &tools.environment)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn ensure_desktop(_tools: &Tools) -> Result<()> {
     Ok(())
 }
 

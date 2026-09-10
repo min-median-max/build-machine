@@ -52,9 +52,9 @@ pub fn msvc_version(tools: &Tools) -> Option<String> {
 
 pub fn webview2_version() -> Option<String> {
     for (hive, base) in [
-        (win32::HKLM, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients"),
-        (win32::HKLM, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients"),
-        (win32::HKCU, "Software\\Microsoft\\EdgeUpdate\\Clients"),
+        (win32::Hive::LocalMachine, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients"),
+        (win32::Hive::LocalMachine, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients"),
+        (win32::Hive::CurrentUser, "Software\\Microsoft\\EdgeUpdate\\Clients"),
     ] {
         let key = format!("{base}\\{WEBVIEW2_CLIENT}");
         if let Some(value) = win32::read_string(hive, &key, "pv") {
@@ -325,7 +325,7 @@ fn update_user_path(tools: &Tools) -> Result<()> {
         tools.cargo_bin(),
         super::home_directory()?.join("go").join("bin"),
     ];
-    let existing = win32::read_string(win32::HKCU, "Environment", "Path").unwrap_or_default();
+    let existing = win32::read_string(win32::Hive::CurrentUser, "Environment", "Path").unwrap_or_default();
     let mut parts: Vec<String> =
         existing.split(';').filter(|value| !value.is_empty()).map(str::to_owned).collect();
     for path in managed {

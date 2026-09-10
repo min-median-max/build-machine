@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "build_machine_worker"
+path = "src/lib.rs"
+
 [[bin]]
 name = "build-machine-worker"
 path = "src/main.rs"

@@ -93,6 +93,12 @@ pub struct Profile {
     pub rustup_sha256: Option<String>,
     #[serde(default)]
     pub packages: Vec<String>,
+    /// The account whose desktop session builds and launches run in.
+    ///
+    /// Declared rather than guessed: `--current-user` needs a session to exist,
+    /// and a machine that has just restarted has none until someone signs in.
+    #[serde(default, rename = "desktopUser")]
+    pub desktop_user: Option<String>,
 }
 
 impl Machine {

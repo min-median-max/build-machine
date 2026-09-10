@@ -68,10 +68,37 @@ That run also showed the machine failing in the wrong place. The workflow's `run
 
 AIRDATA's workflow and test changes are in its working tree and have not been committed there.
 
+### Three operating systems, end to end
+
+AIRDATA now carries `release.yml` with a job per operating system and no hard-coded target. Every platform replayed its own job:
+
+| | replay | release rehearsal | package |
+| --- | --- | --- | --- |
+| Windows | `passed_with_limits` | `passed` | `data_0.1.0_arm64-setup.exe` |
+| Ubuntu | `passed_with_limits` | `passed` | `data_0.1.0_arm64.deb` |
+| macOS | `passed_with_limits` | `passed` | `data_0.1.0_universal.dmg` |
+
+Each release rehearsal opened the package it produced: the disk image was mounted and the application copied out of it, the `.deb`'s metadata and contents were read, and the Windows installer was confirmed to be an executable image without being run. None of them installs anything system-wide, and each receipt says so.
+
+Defects this found, all in code written for this machine:
+
+- The replay ignored `runs-on` and ran every job's steps on every platform, so a workflow with a job per operating system could not be replayed at all. Stage gates are checked per platform now too: testing on macOS and not on Linux used to pass validation while the Linux rehearsal quietly ran nothing.
+- The macOS disk-image bundler moves the application inside the image, so locating it before opening the package could never work for a release. The package is opened first.
+- The package check itself had been dropped in the rewrite without being recorded. It is back on all three platforms.
+- `canonicalize` returns an extended-length path on Windows, so every containment check comparing a resolved path against an unresolved base failed there.
+- The `dpkg-deb` listing writes paths without a leading slash, which the first version of the Linux check did not expect.
+
+### A desktop session is a prerequisite, so the machine provides it
+
+Builds and launches run as the signed-in user, and a machine that has just been installed or restarted sits at its login screen with no session for `--current-user` to attach to. That was being fixed by hand, which is not provisioning.
+
+`setup-system` now ensures it: the desktop user is declared in `machine.json`, autologin is configured if it is not already, and the display manager is restarted only when nobody is signed in. Running it again reports "No change" and "No restart". `doctor` reports the session as a requirement like any other, and building a guest worker no longer needs a session at all — it becomes the user directly, because compiling does not need a desktop.
+
+The parsing this depends on is pinned by tests, including the case that caused the original mistake: the shipped configuration file carries the settings commented out as examples, and reading one of those as configuration is what leaves a machine at the login screen while provisioning reports success.
+
 ### Not exercised
 
-- `ci run` on Windows or Ubuntu. Only macOS has been replayed.
-- `release`, and any installer or package acceptance.
+- A system-level installation of any package. Each rehearsal opens the package it built; none installs it.
 - The release workflow. It has never run; no runner has built a worker and no application has been assembled from one.
 - Driving a guest from the seeded application directory. Only one directory can hold the named Parallels share, and repointing it would have taken the share away from this checkout.
 - Visible rendering on Ubuntu. The process launch and reuse were verified, but the guest screen was locked, so the window itself was not seen.

@@ -18,8 +18,22 @@ use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::System::Threading::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-pub const HKLM: HKEY = HKEY_LOCAL_MACHINE;
-pub const HKCU: HKEY = HKEY_CURRENT_USER;
+/// The registry root to read from, so a raw handle never crosses this
+/// module's boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hive {
+    LocalMachine,
+    CurrentUser,
+}
+
+impl Hive {
+    fn handle(self) -> HKEY {
+        match self {
+            Hive::LocalMachine => HKEY_LOCAL_MACHINE,
+            Hive::CurrentUser => HKEY_CURRENT_USER,
+        }
+    }
+}
 
 fn wide(value: &str) -> Vec<u16> {
     OsStr::new(value).encode_wide().chain(std::iter::once(0)).collect()
@@ -32,10 +46,10 @@ fn from_wide(buffer: &[u16]) -> String {
 
 /// Read a string value, following the 32-bit view where the caller asked for it
 /// through an explicit `WOW6432Node` path.
-pub fn read_string(hive: HKEY, key: &str, name: &str) -> Option<String> {
+pub fn read_string(hive: Hive, key: &str, name: &str) -> Option<String> {
     unsafe {
         let mut handle: HKEY = std::ptr::null_mut();
-        if RegOpenKeyExW(hive, wide(key).as_ptr(), 0, KEY_READ, &mut handle) != ERROR_SUCCESS {
+        if RegOpenKeyExW(hive.handle(), wide(key).as_ptr(), 0, KEY_READ, &mut handle) != ERROR_SUCCESS {
             return None;
         }
         let mut kind = 0u32;
@@ -71,9 +85,9 @@ pub fn read_string(hive: HKEY, key: &str, name: &str) -> Option<String> {
 /// this avoids taking a WMI dependency for one display field.
 pub fn product_name() -> Option<String> {
     const CURRENT_VERSION: &str = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
-    let name = read_string(HKLM, CURRENT_VERSION, "ProductName")?;
+    let name = read_string(Hive::LocalMachine, CURRENT_VERSION, "ProductName")?;
     let build: u32 =
-        read_string(HKLM, CURRENT_VERSION, "CurrentBuildNumber").and_then(|value| value.parse().ok()).unwrap_or(0);
+        read_string(Hive::LocalMachine, CURRENT_VERSION, "CurrentBuildNumber").and_then(|value| value.parse().ok()).unwrap_or(0);
     Some(if build >= 22000 { name.replace("Windows 10", "Windows 11") } else { name })
 }
 
@@ -81,7 +95,7 @@ pub fn product_name() -> Option<String> {
 /// process does not report the architecture it is being emulated as.
 pub fn machine_architecture() -> Option<String> {
     read_string(
-        HKLM,
+        Hive::LocalMachine,
         "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
         "PROCESSOR_ARCHITECTURE",
     )
@@ -93,7 +107,7 @@ pub fn machine_architecture() -> Option<String> {
 pub fn write_user_path(value: &str) -> Result<()> {
     unsafe {
         let mut handle: HKEY = std::ptr::null_mut();
-        if RegOpenKeyExW(HKCU, wide("Environment").as_ptr(), 0, KEY_SET_VALUE, &mut handle) != ERROR_SUCCESS {
+        if RegOpenKeyExW(Hive::CurrentUser.handle(), wide("Environment").as_ptr(), 0, KEY_SET_VALUE, &mut handle) != ERROR_SUCCESS {
             bail!("사용자 환경 변수를 열지 못했어요.");
         }
         let data = wide(value);

@@ -77,8 +77,14 @@ pub fn check(package: &Path, _directory: &Path, environment: &[(String, String)]
         .context("패키지 메타데이터를 읽지 못했어요.")?;
     let contents = vec!["--contents".to_owned(), package.to_string_lossy().into_owned()];
     let listing = stream::checked("dpkg-deb", &contents, None, environment)?;
-    if !listing.contains("/usr/bin/") {
-        bail!("The package does not carry an executable under /usr/bin.");
+    // The listing writes paths relative to the package root and marks
+    // directories with a leading `d`, so the executable is a non-directory
+    // entry beneath `usr/bin`.
+    let carries_executable = listing
+        .lines()
+        .any(|line| !line.starts_with('d') && line.contains("usr/bin/") && !line.trim_end().ends_with("usr/bin/"));
+    if !carries_executable {
+        bail!("The package does not carry an executable under usr/bin.");
     }
     Ok(Checked {
         description: "package metadata and contents read; a system installation was not performed".to_owned(),

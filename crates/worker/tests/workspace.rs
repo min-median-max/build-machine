@@ -1,11 +1,12 @@
+// Ageing a file to test the byte cap uses `utimes`; the logic under test is
+// platform-neutral, so exercising it here is enough.
+#![cfg(unix)]
+
 use build_machine_core::config::Retention;
 use std::fs;
 use std::path::Path;
 
-/// The worker crate is a binary, so its modules are reached through the source
-/// the same way the binary does.
-#[path = "../src/workspace.rs"]
-mod workspace;
+use build_machine_worker::workspace;
 
 fn workspace_dir(root: &Path, name: &str, bytes: usize, age: u64) -> std::path::PathBuf {
     let path = root.join(name);

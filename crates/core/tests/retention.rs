@@ -1,3 +1,7 @@
+// Ageing a file to test the policy uses `utimes`; the policy itself is
+// platform-neutral.
+#![cfg(unix)]
+
 use build_machine_core::config::Retention;
 use build_machine_core::retention;
 use std::fs;

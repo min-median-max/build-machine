@@ -62,6 +62,7 @@
     },
     "linux": {
       "vm": "Ubuntu 26.04 ARM64",
+      "desktopUser": "parallels",
       "runner": "ubuntu-26.04-arm",
       "target": "aarch64-unknown-linux-gnu",
       "bundle": "deb",

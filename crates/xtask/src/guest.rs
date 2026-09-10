@@ -29,18 +29,32 @@ struct Guest {
     prlctl: PathBuf,
     vm: String,
     platform: Platform,
+    /// The account the toolchain belongs to.
+    user: Option<String>,
 }
 
 impl Guest {
     /// Run one command in the guest and return its output.
+    ///
+    /// Building needs the desktop user's toolchain but not their desktop
+    /// session, so on a machine that has one this becomes the user directly.
+    /// A machine sitting at its login screen has no session to attach to, and
+    /// waiting for someone to sign in is not a build step.
     fn run(&self, arguments: &[&str], echo: bool) -> Result<String> {
         if echo {
             println!("> prlctl exec {} {}", self.vm, arguments.join(" "));
         }
-        let output = Command::new(&self.prlctl)
-            .arg("exec")
-            .arg(&self.vm)
-            .arg("--current-user")
+        let mut command = Command::new(&self.prlctl);
+        command.arg("exec").arg(&self.vm);
+        match (self.platform, &self.user) {
+            (Platform::Windows, _) | (_, None) => {
+                command.arg("--current-user");
+            }
+            (_, Some(user)) => {
+                command.args(["runuser", "-u", user, "--"]);
+            }
+        }
+        let output = command
             .args(arguments)
             .output()
             .context("prlctl exec을 실행하지 못했어요.")?;
@@ -82,7 +96,7 @@ impl Guest {
 pub fn build_worker(root: &Path, machine: &Machine, platform: Platform) -> Result<PathBuf> {
     let profile = machine.profile(platform)?;
     let vm = profile.vm.clone().with_context(|| format!("machine.json에 {platform}의 vm이 없어요."))?;
-    let guest = Guest { prlctl: prlctl_path()?, vm, platform };
+    let guest = Guest { prlctl: prlctl_path()?, vm, platform, user: profile.desktop_user.clone() };
     let share = share_root(platform, &machine.share);
     let home = guest.home()?;
     let target = &profile.target;

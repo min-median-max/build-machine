@@ -4,30 +4,14 @@
 //! machine can run it and drives it with a request document; it is also usable
 //! directly on that machine, which is what makes a failure inspectable.
 
-mod build;
-mod ci;
-#[cfg(target_os = "macos")]
-mod macos;
-mod package;
-mod provision;
-mod run;
-mod stream;
-mod workspace;
-#[cfg(windows)]
-mod win32;
-
 use anyhow::{Context, Result};
 use build_machine_core::config::Machine;
 use build_machine_core::report::write_atomic;
 use build_machine_core::request::WorkRequest;
 use clap::{Parser, Subcommand};
-use provision::Tools;
+use build_machine_worker::provision::Tools;
+use build_machine_worker::{build, ci, provision, run, REPORT_BEGIN, REPORT_END};
 use std::path::PathBuf;
-
-/// Markers that let the controller find the structured report in the worker's
-/// output, so the report never has to be written to a read-only share.
-pub const REPORT_BEGIN: &str = "BUILD_MACHINE_REPORT_BEGIN";
-pub const REPORT_END: &str = "BUILD_MACHINE_REPORT_END";
 
 #[derive(Parser)]
 #[command(name = "build-machine-worker", about = "Diagnose, provision, build and launch on this machine")]
