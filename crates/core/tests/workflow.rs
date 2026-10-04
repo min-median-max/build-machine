@@ -490,10 +490,11 @@ fn conditions_follow_the_job_status_as_github_evaluates_them() {
     }
 }
 
-/// A condition with no local value fails validation, before anything runs.
+/// A condition that reads the event payload fails validation when the replay
+/// has no payload, before anything runs.
 #[test]
 fn a_condition_without_a_local_value_fails_validation() {
-    let error = load(
+    let workflow = load(
         r#"# build-machine: skip build reason=fixture
 # build-machine: skip smoke reason=fixture
 name: ci
@@ -506,7 +507,8 @@ jobs:
         if: github.event.pull_request.merged == true
 "#,
     )
-    .unwrap_err();
+    .unwrap();
+    let error = build_machine_core::workflow::github_context(&workflow.jobs, "workflow_dispatch", "s", None, None).unwrap_err();
     assert!(format!("{error:#}").contains("github.event.pull_request.merged"), "{error:#}");
 }
 
@@ -631,11 +633,11 @@ jobs:
     assert_eq!(parsed.jobs[0].steps[1].with["ref"], "${{ github.ref_name }}");
 }
 
-/// Only `event_name`, `sha`, `ref` and `ref_name` have a value; any other
-/// `github` name fails validation as before.
+/// Only `event_name`, `sha`, `ref`, `ref_name` and `event.<path>` have a
+/// value; any other `github` name fails validation as before.
 #[test]
 fn any_other_github_value_still_fails_validation() {
-    for name in ["actor", "repository", "run_id", "event.head_commit.message"] {
+    for name in ["actor", "repository", "run_id", "event"] {
         let error = load(&checkout_of(&format!("          repository: soksak-app/core\n          ref: ${{{{ github.{name} }}}}")))
             .unwrap_err();
         assert!(format!("{error:#}").contains(&format!("Unsupported workflow context: github.{name}")), "{name}: {error:#}");

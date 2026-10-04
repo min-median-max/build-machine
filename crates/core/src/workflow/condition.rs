@@ -3,8 +3,9 @@
 //!
 //! Only what is knowable on this machine is accepted: the job status functions,
 //! literals, `!`, `&&`, `||`, `==`, `!=`, parentheses, the outputs of earlier
-//! steps (`steps.<id>.outputs.<name>`) and the replay's `github.event_name`,
-//! `github.sha`, `github.ref` and `github.ref_name`. A step output has its
+//! steps (`steps.<id>.outputs.<name>`), the replay's `github.event_name`,
+//! `github.sha`, `github.ref` and `github.ref_name`, and `github.event.<path>`
+//! of the event payload the replay is given. A step output has its
 //! value once that step has run, so validation checks the reference and the
 //! run supplies the value. Any other context — `github.actor`, `runner.temp`,
 //! `hashFiles()` — has no local value, so an expression that reads one fails
@@ -64,10 +65,13 @@ struct Scope<'a> {
     needs: &'a BTreeMap<String, JobResult>,
 }
 
-/// The `github` values a replay has, as a push or a dispatch of that ref
-/// carries them on GitHub.
+/// The `github` values a replay has, as the event of that ref carries them
+/// on GitHub.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Github {
+    /// The payload of the replayed event, as GitHub sends it, which
+    /// `github.event.<path>` reads. `None` when the replay was given none.
+    pub event: Option<serde_json::Value>,
     /// The replay's event.
     pub event_name: String,
     /// The replayed revision.
@@ -84,12 +88,24 @@ pub fn ref_name(reference: &str) -> &str {
 }
 
 /// A `github` value an expression reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GithubValue {
     EventName,
     Sha,
     Ref,
     RefName,
+    /// `github.event.<path>`, by the names of the path.
+    Event(Vec<String>),
+}
+
+/// The value at `path` of an event payload, or `None` when the payload does
+/// not hold it.
+pub fn event_value<'a>(payload: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
+    path.iter().try_fold(payload, |value, name| match value {
+        serde_json::Value::Object(map) => map.get(name),
+        serde_json::Value::Array(items) => name.parse::<usize>().ok().and_then(|index| items.get(index)),
+        _ => None,
+    })
 }
 
 /// A step output an expression reads.
@@ -183,6 +199,22 @@ impl Expression {
         }
     }
 
+    /// The `github.event` paths the expression reads, written with dots.
+    fn event_paths(&self, found: &mut Vec<String>) {
+        match self {
+            Expression::Github(GithubValue::Event(path)) => found.push(path.join(".")),
+            Expression::Not(inner) => inner.event_paths(found),
+            Expression::And(left, right)
+            | Expression::Or(left, right)
+            | Expression::Equal(left, right)
+            | Expression::NotEqual(left, right) => {
+                left.event_paths(found);
+                right.event_paths(found);
+            }
+            _ => {}
+        }
+    }
+
     /// Whether the expression reads `github.ref` or `github.ref_name`.
     fn reads_ref(&self) -> bool {
         match self {
@@ -250,6 +282,16 @@ impl Expression {
                 GithubValue::Sha => Value::String(github.sha.clone()),
                 GithubValue::Ref => github.reference.clone().map_or(Value::Null, Value::String),
                 GithubValue::RefName => github.reference.as_deref().map_or(Value::Null, |reference| Value::String(ref_name(reference).to_owned())),
+                GithubValue::Event(path) => {
+                    match github.event.as_ref().and_then(|payload| event_value(payload, path)) {
+                        None | Some(serde_json::Value::Null) => Value::Null,
+                        Some(serde_json::Value::Bool(value)) => Value::Bool(*value),
+                        Some(serde_json::Value::Number(value)) => value.as_f64().map_or(Value::Null, Value::Number),
+                        Some(serde_json::Value::String(value)) => Value::String(value.clone()),
+                        // An object or an array is placed as JSON, as GitHub places it.
+                        Some(other) => Value::String(other.to_string()),
+                    }
+                }
             },
             Expression::NeedsResult(job) => {
                 scope.needs.get(job).map_or(Value::Null, |result| Value::String(result.as_str().to_owned()))
@@ -391,6 +433,15 @@ impl Condition {
         matches!(self, Condition::Expression { expression, .. } if expression.reads_ref())
     }
 
+    /// The `github.event` paths the condition reads.
+    pub fn event_paths(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        if let Condition::Expression { expression, .. } = self {
+            expression.event_paths(&mut found);
+        }
+        found
+    }
+
     /// The step outputs the condition reads.
     pub fn references(&self) -> Vec<Reference> {
         let mut found = Vec::new();
@@ -457,6 +508,17 @@ impl Template {
     /// Whether the template reads `github.ref` or `github.ref_name`.
     pub fn reads_ref(&self) -> bool {
         self.parts.iter().any(|part| matches!(part, Part::Expression(expression) if expression.reads_ref()))
+    }
+
+    /// The `github.event` paths the template reads.
+    pub fn event_paths(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        for part in &self.parts {
+            if let Part::Expression(expression) = part {
+                expression.event_paths(&mut found);
+            }
+        }
+        found
     }
 
     pub fn references(&self) -> Vec<Reference> {
@@ -664,8 +726,8 @@ impl Parser<'_> {
     }
 }
 
-/// `steps.<id>.outputs.<name>` and four `github` values are the contexts
-/// with a local value.
+/// `steps.<id>.outputs.<name>`, four `github` values and `github.event.<path>`
+/// are the contexts with a local value.
 fn context(path: &str) -> Result<Expression> {
     let parts: Vec<&str> = path.split('.').collect();
     Ok(match parts.as_slice() {
@@ -676,9 +738,12 @@ fn context(path: &str) -> Result<Expression> {
         ["github", "sha"] => Expression::Github(GithubValue::Sha),
         ["github", "ref"] => Expression::Github(GithubValue::Ref),
         ["github", "ref_name"] => Expression::Github(GithubValue::RefName),
+        ["github", "event", path @ ..] if !path.is_empty() && path.iter().all(|name| !name.is_empty()) => {
+            Expression::Github(GithubValue::Event(path.iter().map(|name| (*name).to_owned()).collect()))
+        }
         ["needs", job, "result"] if !job.is_empty() => Expression::NeedsResult((*job).to_owned()),
         _ => bail!(
-            "Unsupported workflow context: {path}. Only steps.<id>.outputs.<name>, github.event_name, github.sha, github.ref and github.ref_name have a value in a local replay."
+            "Unsupported workflow context: {path}. Only steps.<id>.outputs.<name>, github.event_name, github.sha, github.ref, github.ref_name and github.event.<path> have a value in a local replay."
         ),
     })
 }

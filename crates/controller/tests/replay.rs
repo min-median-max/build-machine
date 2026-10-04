@@ -56,6 +56,7 @@ fn operation(root: &Path, machine: Machine, project: &Path) -> Operation {
         launch: false,
         workflow: Some(".github/workflows/release.yml".to_owned()),
         event: "push".to_owned(),
+        event_payload: None,
         reference: None,
         result_file: None,
         observer: None,

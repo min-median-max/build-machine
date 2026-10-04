@@ -35,6 +35,10 @@ pub struct Snapshot {
     pub workflow_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<String>,
+    /// The payload of the replayed event, as GitHub sends it, when the
+    /// replay was given one (`--event-payload`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_payload: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_ref: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

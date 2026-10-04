@@ -30,7 +30,7 @@ fn orm_s_deploy_job_condition_and_permissions_pass_validation() {
 }
 
 fn github(event: &str, reference: &str) -> Github {
-    Github { event_name: event.to_owned(), sha: "s".to_owned(), reference: Some(reference.to_owned()) }
+    Github { event: None, event_name: event.to_owned(), sha: "s".to_owned(), reference: Some(reference.to_owned()) }
 }
 
 #[test]

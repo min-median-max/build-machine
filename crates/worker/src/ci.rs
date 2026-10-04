@@ -738,8 +738,13 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     let mut failure: Option<String> = None;
     let mut finished: BTreeMap<String, build_machine_core::workflow::JobResult> = BTreeMap::new();
     let event = request.snapshot.event.as_deref().context("요청에 workflow event가 없어요.")?;
-    let github =
-        github_context(&request.jobs, event, &request.snapshot.revision, request.snapshot.checkout_ref.as_deref())?;
+    let github = github_context(
+        &request.jobs,
+        event,
+        &request.snapshot.revision,
+        request.snapshot.checkout_ref.as_deref(),
+        request.snapshot.event_payload.as_ref(),
+    )?;
     // Pages artifacts live for one replay, as an artifact lives for one run.
     let pages = directory.join("pages");
     if pages.exists() {
@@ -795,6 +800,15 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             runner.set(key, &value);
         }
         runner.set("RUNNER_WORKSPACE", &layout.runner_workspace.to_string_lossy());
+        // A runner writes the event payload to a file of the job and names it
+        // in GITHUB_EVENT_PATH.
+        if let Some(payload) = &request.snapshot.event_payload {
+            let path = layout.temp.join("_github_workflow").join("event.json");
+            std::fs::create_dir_all(path.parent().context("event.json의 폴더가 없어요.")?)?;
+            std::fs::write(&path, serde_json::to_vec_pretty(payload)?)
+                .with_context(|| format!("이벤트 payload를 쓰지 못했어요: {}", path.display()))?;
+            runner.set("GITHUB_EVENT_PATH", &path.to_string_lossy());
+        }
         let status =
             run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure, &github, &pages)?;
         finished.insert(

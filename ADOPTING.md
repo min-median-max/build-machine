@@ -223,8 +223,11 @@ event), `github.sha` (the replayed revision), and `github.ref` and
 `github.ref_name` (the branch or tag the replay checks out: the `--ref` branch
 or tag, or the working tree's current branch). A replay of a commit that no
 branch or tag names refuses a workflow that reads `github.ref` or
-`github.ref_name`. An expression that reads any other context fails
-validation. A condition that
+`github.ref_name`. They also read `github.event.<path>` from the event
+payload given with `--event-payload <file>`, a JSON object as GitHub sends
+the event; steps receive that file as `GITHUB_EVENT_PATH`, and validation
+fails when the payload is missing or does not hold a path that the workflow
+reads. An expression that reads any other context fails validation. A condition that
 depends on a secret is treated as false and recorded as a limit, so a signing
 step is skipped rather than half-attempted.
 

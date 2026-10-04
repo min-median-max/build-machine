@@ -21,6 +21,7 @@ fn snapshot(project: &str) -> Snapshot {
         archive: "/archive.zip".to_owned(),
         workflow_path: None,
         event: None,
+        event_payload: None,
         requested_ref: None,
         stage_counts: BTreeMap::new(),
         framework: None,

@@ -94,7 +94,7 @@ fn validation_checks_the_reference_and_not_the_value() {
 /// A push of tag `v0.0.2` carries these four values; the replay gives them
 /// from its event, its revision and the ref it checks out.
 fn tag_push() -> Github {
-    Github { event_name: "push".to_owned(), sha: "3c5863aefb8a161832542faa9b0d29af65a40fb8".to_owned(), reference: Some("refs/tags/v0.0.2".to_owned()) }
+    Github { event: None, event_name: "push".to_owned(), sha: "3c5863aefb8a161832542faa9b0d29af65a40fb8".to_owned(), reference: Some("refs/tags/v0.0.2".to_owned()) }
 }
 
 #[test]
@@ -145,12 +145,12 @@ fn a_step_s_inputs_env_and_command_take_the_github_context() {
 #[test]
 fn a_replay_without_a_ref_name_refuses_a_workflow_that_reads_it() {
     let reads = load("      - run: echo ${{ github.ref_name }} && make check\n").unwrap();
-    let error = workflow::github_context(&reads.jobs, "push", "3c5863a", None).unwrap_err();
+    let error = workflow::github_context(&reads.jobs, "push", "3c5863a", None, None).unwrap_err();
     assert!(format!("{error:#}").contains("branch나 tag"), "{error:#}");
-    let context = workflow::github_context(&reads.jobs, "push", "3c5863a", Some("refs/tags/v0.0.2")).unwrap();
+    let context = workflow::github_context(&reads.jobs, "push", "3c5863a", Some("refs/tags/v0.0.2"), None).unwrap();
     assert_eq!(context, tag_push_with_sha("3c5863a"));
     let other = load("      - run: echo ${{ github.sha }} && make check\n").unwrap();
-    assert_eq!(workflow::github_context(&other.jobs, "push", "3c5863a", None).unwrap().reference, None);
+    assert_eq!(workflow::github_context(&other.jobs, "push", "3c5863a", None, None).unwrap().reference, None);
 }
 
 fn tag_push_with_sha(sha: &str) -> Github {

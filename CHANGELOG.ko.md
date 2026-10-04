@@ -4,6 +4,7 @@
 
 workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 push하기 전에 여기서 확인할 수 있습니다.
 
+- `ci validate`와 `ci run`은 GitHub이 보내는 형태의 재현 event payload를 `--event-payload <file>`로 받습니다. 표현식은 거기서 `github.event.<path>`를 읽고, 단계는 그 파일을 `GITHUB_EVENT_PATH`로 받으며, payload가 없거나 workflow가 읽는 경로가 없으면 검증에서 실패합니다. soksak registry workflow는 어떤 재현도 줄 수 없던 `github.event.pull_request`와 `github.event.workflow_run`을 읽습니다.
 - `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`가 단계에 직접 또는 버전 파일로 선언한 릴리스를 설치하고 이후 단계의 PATH 앞에 둡니다. Node.js·Go 아카이브와 Composer는 nodejs.org, go.dev, getcomposer.org가 공개한 체크섬과 대조하고, 릴리스마다 자기 디렉터리를 두므로 두 번째 재현은 아무것도 설치하지 않습니다. PHP는 아래에 적은 대로 hosted runner의 setup-php처럼 설치하며, 그 릴리스를 PATH의 `php`로 정합니다. 이전에는 `setup-node`가 workflow의 선언과 상관없이 `machine.json`의 Node.js로 대신했습니다.
 - action 이름을 GitHub처럼 대소문자 구분 없이 맞춥니다. `Swatinem/rust-cache`가 검증에서 실패했습니다.
 - 단계를 workflow 순서대로 실행합니다. 이전에는 스테이지별로 실행해서, `setup`으로 분류된 단계가 자신이 읽는 출력을 만드는 앞의 `test` 단계보다 먼저 실행됐습니다. 스테이지는 이제 보고 방식일 뿐입니다.

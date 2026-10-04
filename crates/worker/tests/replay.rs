@@ -228,6 +228,7 @@ fn a_job_runs_by_its_condition_and_the_jobs_before_it() {
         steps: Vec::new(),
         environment: None,
         reads_ref: false,
+        event_paths: Default::default(),
         condition: condition.map(str::to_owned),
     };
     let jobs = vec![
@@ -236,7 +237,7 @@ fn a_job_runs_by_its_condition_and_the_jobs_before_it() {
         job("deploy", &["test"], Some("github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")),
         job("report", &["test"], Some("always()")),
     ];
-    let main = Github { event_name: "push".to_owned(), sha: "s".to_owned(), reference: Some("refs/heads/main".to_owned()) };
+    let main = Github { event: None, event_name: "push".to_owned(), sha: "s".to_owned(), reference: Some("refs/heads/main".to_owned()) };
     let results = |entries: &[(&str, JobResult)]| -> BTreeMap<String, JobResult> {
         entries.iter().map(|(id, result)| ((*id).to_owned(), *result)).collect()
     };

@@ -9,7 +9,7 @@ use super::adapter::Adapter;
 use super::condition::{Condition, Github, Outputs, Reference, Template};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +72,10 @@ pub struct Job {
     /// name cannot give.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reads_ref: bool,
+    /// The `github.event` paths the job's expressions read, written with
+    /// dots. A replay's event payload must hold each.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub event_paths: BTreeSet<String>,
     /// The job's `if:`. Without one a job runs when every job before it
     /// succeeded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -342,12 +346,32 @@ fn check_references(references: Vec<Reference>, defined: &[String], owner: &str)
     Ok(())
 }
 
-/// Check a template and return whether it reads `github.ref` or
-/// `github.ref_name`.
-fn check_template(text: &str, defined: &[String], owner: &str) -> Result<bool> {
+/// What a job's expressions read of the `github` context that a replay has
+/// to give: the ref name and the paths of the event payload.
+#[derive(Default)]
+struct Reads {
+    reference: bool,
+    event: BTreeSet<String>,
+}
+
+impl Reads {
+    fn template(&mut self, template: &Template) {
+        self.reference |= template.reads_ref();
+        self.event.extend(template.event_paths());
+    }
+
+    fn condition(&mut self, condition: &Condition) {
+        self.reference |= condition.reads_ref();
+        self.event.extend(condition.event_paths());
+    }
+}
+
+/// Check a template and note what it reads of the `github` context.
+fn check_template(text: &str, defined: &[String], owner: &str, reads: &mut Reads) -> Result<()> {
     let template = Template::parse(text).with_context(|| owner.to_owned())?;
     check_references(template.references(), defined, owner)?;
-    Ok(template.reads_ref())
+    reads.template(&template);
+    Ok(())
 }
 
 impl Step {
@@ -374,9 +398,9 @@ impl Step {
     }
 }
 
-/// The job's steps, and whether any of their expressions or the job's `env`
-/// reads `github.ref` or `github.ref_name`.
-fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&Yaml>) -> Result<(Vec<Step>, bool)> {
+/// The job's steps, and what their expressions and the job's `env` read of
+/// the `github` context.
+fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&Yaml>) -> Result<(Vec<Step>, Reads)> {
     let Some(Yaml::Sequence(items)) = value else {
         bail!("각 job에는 하나 이상의 steps가 필요해요.");
     };
@@ -386,10 +410,10 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
     let mut steps = Vec::new();
     // The ids of the earlier `run` steps, whose outputs later steps may read.
     let mut defined: Vec<String> = Vec::new();
-    let mut reads_ref = false;
+    let mut reads = Reads::default();
     for (key, value) in job_env {
         if !names_secret(value) {
-            reads_ref |= check_template(value, &[], &format!("job {job_id}의 env {key}"))?;
+            check_template(value, &[], &format!("job {job_id}의 env {key}"), &mut reads)?;
         }
     }
     for (position, item) in items.iter().enumerate() {
@@ -439,19 +463,19 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
         if let Some(job) = parsed.needs().first() {
             bail!("{owner}: needs.{job}.result는 job의 if에서만 읽어요.");
         }
-        reads_ref |= parsed.reads_ref();
+        reads.condition(&parsed);
         for text in [&run, &text(get(item, "working-directory"))].into_iter().flatten() {
-            reads_ref |= check_template(text, &defined, &owner)?;
+            check_template(text, &defined, &owner, &mut reads)?;
         }
         let env = string_map(get(item, "env"));
         for (key, value) in &env {
             if !names_secret(value) {
-                reads_ref |= check_template(value, &defined, &format!("{owner}의 env {key}"))?;
+                check_template(value, &defined, &format!("{owner}의 env {key}"), &mut reads)?;
             }
         }
         for (key, value) in &with {
             if reads_input(adapter, key) {
-                reads_ref |= check_template(value, &defined, &format!("{owner}의 with {key}"))?;
+                check_template(value, &defined, &format!("{owner}의 with {key}"), &mut reads)?;
             }
         }
         let id = text(get(item, "id"));
@@ -483,7 +507,7 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
             job_id: job_id.to_owned(),
         });
     }
-    Ok((steps, reads_ref))
+    Ok((steps, reads))
 }
 
 fn order_jobs(mut jobs: Vec<Job>) -> Result<Vec<Job>> {
@@ -554,7 +578,7 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         let timeout_minutes =
             timeout_minutes(get(value, "timeout-minutes"), &format!("job {id}"))?.unwrap_or(DEFAULT_JOB_TIMEOUT_MINUTES);
         let environment = environment(get(value, "environment"), &id)?;
-        let (steps, mut reads_ref) = parse_steps(&id, &env, get(value, "steps"))?;
+        let (steps, mut reads) = parse_steps(&id, &env, get(value, "steps"))?;
         if let Some(url) = environment.as_ref().and_then(|environment| environment.url.as_deref()) {
             let owner = format!("job {id}의 environment의 url");
             let template = Template::parse(url).with_context(|| owner.clone())?;
@@ -563,7 +587,7 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
             }) {
                 bail!("{owner}: steps.{}.outputs.{}의 {}는 이 job의 단계 id가 아니에요.", reference.step, reference.output, reference.step);
             }
-            reads_ref |= template.reads_ref();
+            reads.template(&template);
         }
         // A job's `if` reads the github context and the results of the jobs
         // it needs; it runs before any step, so no step output exists yet.
@@ -575,8 +599,19 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         if let Some(job) = parsed.needs().into_iter().find(|job| !needs.contains(job)) {
             bail!("job {id}의 if가 needs.{job}.result를 읽지만 {job}는 이 job의 needs에 없어요.");
         }
-        reads_ref |= parsed.reads_ref();
-        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps, environment, reads_ref, condition });
+        reads.condition(&parsed);
+        jobs.push(Job {
+            id,
+            runs_on,
+            needs,
+            timeout_minutes,
+            env,
+            steps,
+            environment,
+            reads_ref: reads.reference,
+            event_paths: reads.event,
+            condition,
+        });
     }
     // Each platform replays its own jobs, so a job can only wait for a job
     // that is replayed wherever it is.

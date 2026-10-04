@@ -4,6 +4,7 @@
 
 Workflow replay runs a workflow the way a runner does, so a repository's CI can be checked here before it is pushed.
 
+- `ci validate` and `ci run` take `--event-payload <file>`, the payload of the replayed event as GitHub sends it. Expressions read `github.event.<path>` from it, steps receive it as `GITHUB_EVENT_PATH`, and validation fails when the payload is missing or lacks a path the workflow reads. The soksak registry workflows read `github.event.pull_request` and `github.event.workflow_run`, which no replay could give.
 - `actions/setup-node`, `actions/setup-go` and `shivammathur/setup-php` install the release their step declares, directly or through a version file, and put it first on PATH for later steps. Node.js and Go archives and Composer are verified against the checksums nodejs.org, go.dev and getcomposer.org publish, and each release keeps its own directory, so a second replay installs nothing. PHP is installed as setup-php installs it on a hosted runner, described below, and that release becomes the `php` on PATH. `setup-node` previously stood in with the Node.js of `machine.json` whatever the workflow declared.
 - Action names match without regard to case, as on GitHub: `Swatinem/rust-cache` failed validation.
 - Steps run in workflow order. They ran stage by stage, so a step classified as `setup` ran before an earlier `test` step whose output it read. The stage is now only how a step is reported.

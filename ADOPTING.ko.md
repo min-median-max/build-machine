@@ -195,8 +195,10 @@ skipped로 기록하고, 그 job을 기다리는 job은 `skipped`를 봅니다. 
 빈 값입니다. 같은 곳에서 `github.event_name`(재현의 event), `github.sha`(재현한 revision),
 `github.ref`와 `github.ref_name`(재현이 checkout하는 branch나 tag: `--ref`의 branch나 tag,
 또는 작업 트리의 현재 branch)을 읽습니다. branch나 tag 이름이 없는 commit의 재현은
-`github.ref`나 `github.ref_name`을 읽는 workflow를 거부합니다. 그 밖의 context를 읽는
-표현식은 검증에서 실패합니다. 비밀에 의존하는 조건은 거짓으로 두고 제한으로 기록하므로, 서명
+`github.ref`나 `github.ref_name`을 읽는 workflow를 거부합니다. 또한 GitHub이 event를 보내는
+형태의 JSON 객체를 `--event-payload <file>`로 주면 그 event payload에서 `github.event.<path>`를
+읽습니다. 단계는 그 파일을 `GITHUB_EVENT_PATH`로 받고, payload가 없거나 workflow가 읽는 경로를
+담지 않으면 검증에서 실패합니다. 그 밖의 context를 읽는 표현식은 검증에서 실패합니다. 비밀에 의존하는 조건은 거짓으로 두고 제한으로 기록하므로, 서명
 단계는 어중간하게 시도되지 않고 건너뜁니다.
 
 ### 세 개의 게이트

@@ -31,6 +31,8 @@ pub struct Operation {
     pub launch: bool,
     pub workflow: Option<String>,
     pub event: String,
+    /// The payload of the replayed event (`--event-payload`), a JSON object.
+    pub event_payload: Option<serde_json::Value>,
     pub reference: Option<String>,
     pub result_file: Option<PathBuf>,
     /// Where each produced line goes, besides the log file. The command line

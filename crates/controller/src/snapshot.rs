@@ -39,6 +39,7 @@ fn archive_project(state: &Path, project: &Path, reference: Option<&str>) -> Res
         archive: archive.to_string_lossy().into_owned(),
         workflow_path: None,
         event: None,
+        event_payload: None,
         requested_ref: None,
         stage_counts: Default::default(),
         framework: None,
@@ -94,6 +95,7 @@ pub fn for_run(operation: &Operation) -> Result<Snapshot> {
         archive: String::new(),
         workflow_path: None,
         event: None,
+        event_payload: None,
         requested_ref: None,
         stage_counts: Default::default(),
         framework: None,
@@ -154,7 +156,13 @@ pub fn for_replay(operation: &Operation, state: &Path) -> Result<Replay> {
     snapshot.history_sha256 = Some(history.sha256);
     snapshot.checkout_ref = history.reference;
     // The workflow's github.ref is the ref the checkout takes.
-    workflow::github_context(&selected.jobs, &event, &snapshot.revision, snapshot.checkout_ref.as_deref())?;
+    workflow::github_context(
+        &selected.jobs,
+        &event,
+        &snapshot.revision,
+        snapshot.checkout_ref.as_deref(),
+        operation.event_payload.as_ref(),
+    )?;
     // Each other repository a checkout step names is fetched from its local
     // clone's committed history, bundled the same way beside the project's.
     for (name, clone) in workflow::checkout_repositories(&selected, &operation.machine.repositories)? {
@@ -168,6 +176,7 @@ pub fn for_replay(operation: &Operation, state: &Path) -> Result<Replay> {
     }
     snapshot.workflow_path = Some(selected.path.clone());
     snapshot.event = Some(event);
+    snapshot.event_payload = operation.event_payload.clone();
     snapshot.requested_ref = operation.reference.clone();
     snapshot.stage_counts = workflow::stage_counts(&selected);
     Ok(Replay { snapshot, workflow: selected })

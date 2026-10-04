@@ -102,6 +102,10 @@ struct Replay {
     workflow: Option<String>,
     #[arg(long, default_value = "workflow_dispatch")]
     event: String,
+    /// A JSON file with the payload of the event, as GitHub sends it, for a
+    /// workflow that reads `github.event`.
+    #[arg(long = "event-payload")]
+    event_payload: Option<PathBuf>,
     /// A commit, branch or tag to replay. Omitted means the current tree.
     #[arg(long = "ref")]
     reference: Option<String>,
@@ -173,7 +177,7 @@ fn execute() -> Result<()> {
     // Validation reads the repository and reports; it starts no work, so it
     // does not take the lock or record a run.
     if let Command::Ci { action: CiCommand::Validate { replay } } = &cli.command {
-        let operation = build_operation(&root, &machine, Action::Ci, replay.selection.clone(), Some(replay.clone()), None);
+        let operation = build_operation(&root, &machine, Action::Ci, replay.selection.clone(), Some(replay.clone()), None)?;
         let state = state_directory(&root);
         let prepared = snapshot::for_replay(&operation, &state)?;
         println!(
@@ -207,7 +211,7 @@ fn execute() -> Result<()> {
         }
         Command::Ci { action: CiCommand::Validate { .. } } => unreachable!("handled above"),
     };
-    let mut operation = build_operation(&root, &machine, action, selection, replay, recipe);
+    let mut operation = build_operation(&root, &machine, action, selection, replay, recipe)?;
     if operation.project.is_none() {
         operation.project = project;
     }
@@ -225,6 +229,19 @@ fn execute() -> Result<()> {
     Ok(())
 }
 
+/// The event payload of `--event-payload`: a JSON object, as GitHub sends an
+/// event.
+fn read_event_payload(path: &std::path::Path) -> Result<serde_json::Value> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("이벤트 payload 파일을 읽지 못했어요: {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .with_context(|| format!("이벤트 payload가 JSON이 아니에요: {}", path.display()))?;
+    if !value.is_object() {
+        bail!("이벤트 payload는 JSON 객체여야 해요: {}", path.display());
+    }
+    Ok(value)
+}
+
 fn build_operation(
     root: &std::path::Path,
     machine: &Machine,
@@ -232,8 +249,10 @@ fn build_operation(
     selection: Selection,
     replay: Option<Replay>,
     recipe: Option<Recipe>,
-) -> Operation {
-    Operation {
+) -> Result<Operation> {
+    let event_payload =
+        replay.as_ref().and_then(|replay| replay.event_payload.as_deref()).map(read_event_payload).transpose()?;
+    Ok(Operation {
         root: root.to_path_buf(),
         machine: machine.clone(),
         action,
@@ -246,8 +265,9 @@ fn build_operation(
         launch: recipe.as_ref().map(|recipe| recipe.run).unwrap_or(false),
         workflow: replay.as_ref().and_then(|replay| replay.workflow.clone()),
         event: replay.as_ref().map(|replay| replay.event.clone()).unwrap_or_else(|| "workflow_dispatch".to_owned()),
+        event_payload,
         reference: replay.as_ref().and_then(|replay| replay.reference.clone()),
         result_file: selection.result_file,
         observer: Some(printing_observer()),
-    }
+    })
 }

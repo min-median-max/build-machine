@@ -72,10 +72,33 @@ pub fn checkout_repositories(workflow: &Workflow, repositories: &BTreeMap<String
 }
 
 /// The `github` values of a replay of `sha` for `event`, checked out as
-/// `reference` (`refs/heads/<branch>` or `refs/tags/<tag>`). A commit that no
-/// branch or tag names has no `github.ref`, so jobs that read it are refused
-/// rather than given an empty value.
-pub fn github_context(jobs: &[Job], event: &str, sha: &str, reference: Option<&str>) -> Result<Github> {
+/// `reference` (`refs/heads/<branch>` or `refs/tags/<tag>`), with the event
+/// `payload` the replay was given. A commit that no branch or tag names has
+/// no `github.ref`, and a payload has only the values it holds, so jobs that
+/// read anything else are refused rather than given an empty value.
+pub fn github_context(
+    jobs: &[Job],
+    event: &str,
+    sha: &str,
+    reference: Option<&str>,
+    payload: Option<&serde_json::Value>,
+) -> Result<Github> {
+    for job in jobs {
+        for path in &job.event_paths {
+            let names: Vec<String> = path.split('.').map(str::to_owned).collect();
+            match payload {
+                None => bail!(
+                    "job {}가 github.event.{path}를 읽지만 이 재현에는 이벤트 payload가 없어요. --event-payload로 {event} 이벤트의 payload JSON 파일을 줘야 해요.",
+                    job.id
+                ),
+                Some(payload) if condition::event_value(payload, &names).is_none() => bail!(
+                    "job {}가 github.event.{path}를 읽지만 이벤트 payload에 그 값이 없어요.",
+                    job.id
+                ),
+                Some(_) => {}
+            }
+        }
+    }
     if reference.is_none() {
         if let Some(job) = jobs.iter().find(|job| job.reads_ref) {
             bail!(
@@ -84,7 +107,12 @@ pub fn github_context(jobs: &[Job], event: &str, sha: &str, reference: Option<&s
             );
         }
     }
-    Ok(Github { event_name: event.to_owned(), sha: sha.to_owned(), reference: reference.map(str::to_owned) })
+    Ok(Github {
+        event: payload.cloned(),
+        event_name: event.to_owned(),
+        sha: sha.to_owned(),
+        reference: reference.map(str::to_owned),
+    })
 }
 
 /// Read and validate a workflow file.
