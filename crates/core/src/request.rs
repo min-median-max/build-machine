@@ -37,6 +37,9 @@ pub struct WorkRequest {
     pub snapshot: Snapshot,
     /// Where the worker can read the source archive from, in its own namespace.
     pub archive: String,
+    /// Where the worker can read the replay's Git history from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<String>,
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<String>,

@@ -26,6 +26,9 @@ fn snapshot(project: &str) -> Snapshot {
         framework: None,
         command: None,
         artifact: None,
+        history: None,
+        history_sha256: None,
+        checkout_ref: None,
     }
 }
 

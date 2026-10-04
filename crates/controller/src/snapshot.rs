@@ -44,6 +44,9 @@ fn archive_project(state: &Path, project: &Path, reference: Option<&str>) -> Res
         framework: None,
         command: None,
         artifact: None,
+        history: None,
+        history_sha256: None,
+        checkout_ref: None,
     };
     Ok((snapshot, archive))
 }
@@ -95,6 +98,9 @@ pub fn for_run(operation: &Operation) -> Result<Snapshot> {
         framework: None,
         command: None,
         artifact: None,
+        history: None,
+        history_sha256: None,
+        checkout_ref: None,
     })
 }
 
@@ -137,7 +143,14 @@ pub fn for_replay(operation: &Operation, state: &Path) -> Result<Replay> {
         }
         None => workflow::discover(&root, operation.workflow.as_deref(), &event, None)?,
     };
-    let (mut snapshot, _archive) = archive_project(state, &root, reference)?;
+    let (mut snapshot, archive) = archive_project(state, &root, reference)?;
+    // actions/checkout fetches from the repository's history; the bundle is
+    // replaced on every replay, as branches and tags move.
+    let bundle = archive.with_file_name("history.bundle");
+    let history = source::make_history(&root, reference, &bundle)?;
+    snapshot.history = Some(bundle.to_string_lossy().into_owned());
+    snapshot.history_sha256 = Some(history.sha256);
+    snapshot.checkout_ref = history.reference;
     snapshot.workflow_path = Some(selected.path.clone());
     snapshot.event = Some(event);
     snapshot.requested_ref = operation.reference.clone();

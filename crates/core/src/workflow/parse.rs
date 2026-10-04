@@ -185,6 +185,27 @@ fn skip_comments(source: &str) -> BTreeMap<String, String> {
     skips
 }
 
+/// `actions/checkout`'s inputs: `fetch-depth` (1 by default, 0 for the whole
+/// history) and `fetch-tags`. `clean` and `persist-credentials` change nothing
+/// in a workspace that starts empty and has no credentials to keep.
+pub fn checkout_inputs(with: &BTreeMap<String, String>) -> Result<(u32, bool)> {
+    let depth = match with.get("fetch-depth") {
+        None => 1,
+        Some(value) => value.trim().parse().ok().with_context(|| format!("fetch-depth는 0 이상의 정수여야 해요: {value}"))?,
+    };
+    let flag = |input: &str| -> Result<bool> {
+        match with.get(input).map(|value| value.trim()) {
+            None => Ok(false),
+            Some("true") => Ok(true),
+            Some("false") => Ok(false),
+            Some(other) => bail!("{input}는 true 또는 false여야 해요: {other}"),
+        }
+    };
+    flag("clean")?;
+    flag("persist-credentials")?;
+    Ok((depth, flag("fetch-tags")?))
+}
+
 /// A value that names a secret or the GitHub token. Neither exists locally:
 /// an `env` value of one is empty in a replay, as an unset secret is on
 /// GitHub, and the replay records that as a limit.
@@ -290,6 +311,9 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
             if let Some(input) = with.keys().find(|input| !accepted.contains(&input.as_str())) {
                 bail!("{name}의 with 입력 '{input}'은 아직 지원하지 않아요. 지원 입력: {}", accepted.join(", "));
             }
+        }
+        if adapter == Adapter::Checkout {
+            checkout_inputs(&with).with_context(|| format!("job {job_id}의 step {index} ({name})"))?;
         }
         let owner = format!("job {job_id}의 step {index} ({name})");
         let condition = text(get(item, "if"));

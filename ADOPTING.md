@@ -113,9 +113,23 @@ Shell `run` steps execute as written, in `bash -e` on Linux and macOS as a
 runner runs them, and in PowerShell on Windows. Steps run in workflow order.
 Each step can set variables through `$GITHUB_ENV` and add to PATH through
 `$GITHUB_PATH` for the steps after it; `GITHUB_WORKSPACE`, `RUNNER_TEMP`,
-`RUNNER_OS` and `RUNNER_ARCH` are set. `actions/checkout` stands in with the
-source snapshot, which carries no `.git`; a `fetch-depth` other than 1 is
-recorded as a limit.
+`RUNNER_OS`, `RUNNER_ARCH`, `GITHUB_SHA`, `GITHUB_REF`, `GITHUB_REF_NAME`,
+`GITHUB_EVENT_NAME` and `GITHUB_JOB` are set.
+
+**Checkout** — every job starts in an empty `GITHUB_WORKSPACE`
+(`<work>/<repository>/<repository>`, as on a runner), and `actions/checkout`
+makes it a Git repository at the replayed revision with the commands the
+action runs: one commit by default, every branch and tag at `fetch-depth: 0`,
+and the branch or tag of the replay checked out (a commit is checked out
+detached). The history is this repository's own branches, tags and `HEAD`,
+sent as a Git bundle and fetched through a local mirror that is `origin`; it
+is not the GitHub remote, which is recorded as a limit. A replay of the
+working tree carries its uncommitted edits, deletions and untracked files
+staged on the replayed commit, so `git ls-files` and `git grep` see them and
+`git log` sees only real commits; that is recorded as a limit too. `ref`,
+`repository`, `path`, `submodules` and the other inputs that would check out
+something else fail validation. When a job ends, processes that still carry
+its `RUNNER_TRACKING_ID` are terminated, as a runner does (Linux).
 
 **Jobs** — a job may use `name`, `runs-on`, `needs`, `env`, `steps` and
 `timeout-minutes`; the workflow may use `name`, `run-name`, `on`, `env`,

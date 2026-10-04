@@ -105,6 +105,9 @@ impl Adapter {
     /// `None` means the adapter does not read its inputs.
     pub fn inputs(&self) -> Option<&'static [&'static str]> {
         Some(match self {
+            // `ref`, `repository`, `path`, `submodules`, `lfs`, `sparse-checkout`
+            // and `filter` would check out something else.
+            Adapter::Checkout => &["fetch-depth", "fetch-tags", "clean", "persist-credentials"],
             Adapter::NodeSetup => &["node-version", "node-version-file", "cache", "cache-dependency-path"],
             Adapter::GoSetup => &["go-version", "go-version-file", "cache", "cache-dependency-path"],
             Adapter::PhpSetup => &["php-version", "php-version-file", "extensions", "tools", "coverage"],

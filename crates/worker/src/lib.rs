@@ -5,6 +5,7 @@
 
 pub mod actions;
 pub mod build;
+pub mod checkout;
 pub mod ci;
 #[cfg(target_os = "linux")]
 pub mod desktop;

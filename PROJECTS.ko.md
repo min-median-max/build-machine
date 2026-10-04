@@ -44,7 +44,7 @@ build-machine build /path/to/project --os linux \
 
 지원하는 action을 사용하는 단계는 어댑터가 스테이지를 결정합니다. checkout, pnpm/Node/Rust 준비와 캐시는 `setup`, Tauri action은 `build`, 산출물 업로드와 릴리스는 `release`입니다. 이름과 명령의 키워드로 분류하는 대상은 셸 `run` 단계뿐이므로, action의 이름이 스테이지 게이트를 대신 충족시키는 일은 없습니다. 단계는 workflow 순서대로 실행하고 `setup`, `test`, `build`, `smoke`, `release` 스테이지로 나눠 보고합니다. build, test 또는 smoke 명령이 없는 workflow는 `# build-machine: skip smoke reason=데스크톱 smoke는 별도 검증`처럼 정확한 주석을 포함해야 합니다. 그 사유는 플랫폼 결과에 기록합니다. 알 수 없는 action, 지원하지 않는 표현식, 이벤트/ref 불일치와 게이트 누락은 검증에서 실패합니다.
 
-소스는 현재 Git 작업 트리(무시되지 않은 수정 포함) 또는 변경할 수 없는 `--ref` archive 중 하나입니다. matrix 각 항목은 같은 소스 리비전·소스 hash·변경 상태를 기록합니다. 순차 실행이 기본이며 `--execution parallel`은 선택한 OS를 동시에 실행하고 동일한 단계 필드와 대시보드 순서를 유지합니다.
+소스는 현재 Git 작업 트리(무시되지 않은 수정 포함) 또는 변경할 수 없는 `--ref` archive 중 하나입니다. `actions/checkout`은 저장소의 branch, tag, `HEAD` bundle에서 `fetch-depth`대로 각 job의 빈 workspace를 그 revision의 Git 저장소로 만들고, 커밋하지 않은 수정은 재현하는 commit 위에 stage합니다. matrix 각 항목은 같은 소스 리비전·소스 hash·변경 상태를 기록합니다. 순차 실행이 기본이며 `--execution parallel`은 선택한 OS를 동시에 실행하고 동일한 단계 필드와 대시보드 순서를 유지합니다.
 
 이 GUI에서는 `python3 desktop.py dev`로 React 개발 서버와 Rust/Tauri 프로세스를 함께 실행합니다. 다른 프로젝트는 자체 Tauri 또는 Wails 개발 명령과 설정을 사용합니다. 빌드 머신이 화면의 포트 번호를 고정하도록 요구하지는 않습니다.
 

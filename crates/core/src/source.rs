@@ -45,6 +45,16 @@ pub struct Snapshot {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<String>,
+    /// A workflow replay's Git history for `actions/checkout`: the bundle of
+    /// the repository's branches, tags and `HEAD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_sha256: Option<String>,
+    /// The branch or tag a replay checks out (`refs/heads/main`), or `None`
+    /// for a commit checked out detached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout_ref: Option<String>,
 }
 
 pub fn sha256_bytes(data: &[u8]) -> String {
@@ -192,7 +202,7 @@ fn file_mode(_path: &Path) -> u32 {
 /// Write the archive and return the snapshot facts describing it.
 pub fn make_archive(project: &Path, destination: &Path, reference: Option<&str>) -> Result<(String, bool, String, usize, SourceMode)> {
     let project = repository_root(project)?;
-    let revision = git_text(&project, &["rev-parse", reference.unwrap_or("HEAD")])?;
+    let revision = commit_of(&project, reference)?;
     let (mut entries, dirty, mode) = match reference {
         Some(_) => (collect_ref_entries(&project, &revision)?, false, SourceMode::Ref),
         None => {
@@ -218,4 +228,59 @@ pub fn make_archive(project: &Path, destination: &Path, reference: Option<&str>)
     archive.finish()?.flush()?;
     let source_hash = sha256_file(destination)?;
     Ok((revision, dirty, source_hash, entries.len(), mode))
+}
+
+/// The commit a reference names. An annotated tag names a tag object, whose
+/// commit is what a checkout of it holds.
+fn commit_of(project: &Path, reference: Option<&str>) -> Result<String> {
+    git_text(project, &["rev-parse", "--verify", &format!("{}^{{commit}}", reference.unwrap_or("HEAD"))])
+}
+
+/// The history a replay checks out, recorded beside the archive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct History {
+    pub sha256: String,
+    /// The full name of the branch or tag the replay checks out, as
+    /// `actions/checkout` checks out the ref of the event. `None` is a commit
+    /// that is neither, which is checked out detached.
+    pub reference: Option<String>,
+}
+
+/// Bundle the repository's history for `actions/checkout`: every branch and
+/// tag, and `HEAD`, as a repository on GitHub has them. A checkout fetches
+/// from it what its `fetch-depth` asks for.
+///
+/// The branches and tags are this repository's own, not its remote's: a
+/// replay checks a commit that may not have been pushed.
+pub fn make_history(project: &Path, reference: Option<&str>, destination: &Path) -> Result<History> {
+    let project = repository_root(project)?;
+    let revision = commit_of(&project, reference)?;
+    let symbolic = match reference {
+        None => {
+            let output = Command::new("git").arg("-C").arg(&project).args(["symbolic-ref", "-q", "HEAD"]).output()?;
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        }
+        Some(reference) => git_text(&project, &["rev-parse", "--symbolic-full-name", reference])?,
+    };
+    let reference = Some(symbolic).filter(|name| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"));
+    let containing = git_text(&project, &["for-each-ref", "--contains", &revision, "--format=%(refname)", "refs/heads", "refs/tags"])?;
+    let in_head = Command::new("git")
+        .arg("-C")
+        .arg(&project)
+        .args(["merge-base", "--is-ancestor", &revision, "HEAD"])
+        .status()?
+        .success();
+    if containing.is_empty() && !in_head {
+        bail!("{revision}는 이 저장소의 어느 branch, tag나 HEAD에도 없어서 checkout할 수 없어요.");
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let partial = destination.with_extension("partial");
+    git(
+        &project,
+        &["bundle", "create", "--quiet", &partial.to_string_lossy(), "--branches", "--tags", "HEAD"],
+    )?;
+    std::fs::rename(&partial, destination)?;
+    Ok(History { sha256: sha256_file(destination)?, reference })
 }

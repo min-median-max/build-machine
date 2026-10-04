@@ -75,17 +75,26 @@ pub fn extract_source(archive: &Path, expected: &str, directory: &Path) -> Resul
     if source.exists() {
         bail!("Incomplete source extraction at {}. Inspect it before retrying.", source.display());
     }
+    unpack(archive, &source)?;
+    std::fs::write(&marker, expected)?;
+    Ok(source)
+}
+
+/// Write every file of a source archive under `root`, with its recorded
+/// permissions, and return the names it holds. A file already there is
+/// replaced.
+pub fn unpack(archive: &Path, root: &Path) -> Result<Vec<String>> {
     let file = std::fs::File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)?;
-    let root = source.clone();
-    std::fs::create_dir_all(&root)?;
+    std::fs::create_dir_all(root)?;
+    let mut names = Vec::new();
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
         let Some(relative) = entry.enclosed_name() else {
             bail!("Archive path escapes the extraction directory.");
         };
-        let destination = root.join(relative);
-        if !destination.starts_with(&root) {
+        let destination = root.join(&relative);
+        if !destination.starts_with(root) {
             bail!("Archive path escapes the extraction directory.");
         }
         if entry.is_dir() {
@@ -105,9 +114,9 @@ pub fn extract_source(archive: &Path, expected: &str, directory: &Path) -> Resul
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(mode & 0o777))?;
         }
+        names.push(entry.name().to_owned());
     }
-    std::fs::write(&marker, expected)?;
-    Ok(source)
+    Ok(names)
 }
 
 /// Remove signing credentials a developer shell may carry. Local rehearsal

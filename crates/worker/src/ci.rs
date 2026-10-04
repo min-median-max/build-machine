@@ -5,7 +5,7 @@
 //! or release publication.
 
 use crate::actions;
-use crate::build::{collect_artifacts, development_bundle, extract_source, project_root, workflow_shell};
+use crate::build::{collect_artifacts, development_bundle, project_root, workflow_shell};
 use crate::runner::Runner;
 use anyhow::Context;
 use crate::provision::Tools;
@@ -19,6 +19,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 const SEEDED_LIMIT: &str = "Local CI never signs, notarizes or uploads to GitHub.";
+
+/// What a hosted runner starts each job with and a replay cannot: a fresh
+/// machine image.
+const MACHINE_LIMIT: &str = "Each job starts in an empty workspace, but on this machine: system packages, services and files outside the workspace persist across jobs and replays, where a hosted runner starts every job on a fresh image.";
 
 /// Which limit bounds a step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +110,31 @@ fn tauri_action(
         artifacts.extend(collect_artifacts(&output, extension)?);
     }
     Ok(artifacts)
+}
+
+/// `actions/checkout` into the job's empty workspace.
+fn checkout_step(step: &Step, workspace: &Path, request: &WorkRequest, environment: &[(String, String)]) -> Result<String> {
+    let (fetch_depth, fetch_tags) = build_machine_core::workflow::checkout_inputs(&step.with)?;
+    let history = request.history.as_deref().context("요청에 checkout할 Git 기록이 없어요.")?;
+    let history = Path::new(history);
+    if Some(build_machine_core::source::sha256_file(history)?) != request.snapshot.history_sha256 {
+        bail!("Git history checksum mismatch.");
+    }
+    let mirror = project_root(request)?.join("history.git");
+    crate::checkout::checkout(
+        &crate::checkout::Checkout {
+            history,
+            mirror: &mirror,
+            workspace,
+            archive: Path::new(&request.archive),
+            revision: &request.snapshot.revision,
+            reference: request.snapshot.checkout_ref.as_deref(),
+            dirty: request.snapshot.dirty,
+            fetch_depth,
+            fetch_tags,
+        },
+        environment,
+    )
 }
 
 /// The machine's environment for a replay, without signing credentials and
@@ -239,13 +268,19 @@ fn execute(
             ran
         }
         Adapter::Checkout => {
-            let mut ran = Ran::new(Outcome::Passed);
-            if step.with.get("fetch-depth").is_some_and(|depth| depth.trim() != "1") {
-                let limit = "actions/checkout fetch-depth asks for Git history; the source snapshot carries the files of one revision and no .git.".to_owned();
-                result.limits.push(limit.clone());
-                ran.status = Outcome::PassedWithLimits;
-                ran.reason = Some(limit);
+            let summary = checkout_step(step, source, request, &environment)?;
+            println!("{summary}");
+            result.limits.push(
+                "actions/checkout fetches from this repository's own branches and tags through a local mirror, not from the GitHub remote.".to_owned(),
+            );
+            if request.snapshot.dirty {
+                result.limits.push(format!(
+                    "Uncommitted changes of the working tree are staged on {} in the checkout; GitHub checks out committed files only.",
+                    request.snapshot.revision
+                ));
             }
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.output = Some(summary);
             ran
         }
         adapter if adapter.is_local_stand_in() => Ran::new(Outcome::Passed),
@@ -285,6 +320,28 @@ fn execute(
     };
     runner.finish_step(&files, step.id.as_deref())?;
     Ok(ran)
+}
+
+/// The variables a runner gives every step of a job.
+fn runner_context(request: &WorkRequest, job: &Job, tracking: &str) -> Vec<(&'static str, String)> {
+    let mut context = vec![
+        ("GITHUB_SHA", request.snapshot.revision.clone()),
+        ("GITHUB_JOB", job.id.clone()),
+        ("RUNNER_TRACKING_ID", tracking.to_owned()),
+    ];
+    if let Some(event) = &request.snapshot.event {
+        context.push(("GITHUB_EVENT_NAME", event.clone()));
+    }
+    if let Some(reference) = &request.snapshot.checkout_ref {
+        context.push(("GITHUB_REF", reference.clone()));
+        let (kind, name) = match reference.strip_prefix("refs/heads/") {
+            Some(branch) => ("branch", branch),
+            None => ("tag", reference.trim_start_matches("refs/tags/")),
+        };
+        context.push(("GITHUB_REF_NAME", name.to_owned()));
+        context.push(("GITHUB_REF_TYPE", kind.to_owned()));
+    }
+    context
 }
 
 /// Run one job's steps in order and return where the job stands at its end.
@@ -427,11 +484,20 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     let root = project_root(request)?;
     let signature = request.workflow_signature.clone().unwrap_or_else(|| request.snapshot.source_hash.clone());
     let directory = root.join(format!("ci-{}", &signature[..signature.len().min(24)]));
-    let source = extract_source(Path::new(&request.archive), &request.snapshot.source_hash, &directory)?;
+    if build_machine_core::source::sha256_file(Path::new(&request.archive))? != request.snapshot.source_hash {
+        bail!("Source snapshot checksum mismatch.");
+    }
+    // GITHUB_WORKSPACE is <work>/<repository>/<repository>, as on a runner.
+    let repository = Path::new(&request.snapshot.project)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .context("프로젝트 이름이 없어요.")?;
+    let workspace = directory.join("work").join(&repository).join(&repository);
     let base = replay_environment(tools);
 
     let mut result = PlatformResult::passed(build_machine_core::now(), String::new());
     result.limits.push(SEEDED_LIMIT.to_owned());
+    result.limits.push(MACHINE_LIMIT.to_owned());
     result.signing = Some("unverified".to_owned());
 
     let diagnosis = tools.doctor()?;
@@ -462,9 +528,27 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             }
             continue;
         }
-        let runner = Runner::new(&directory.join("runner").join(&job.id), &source, tools.platform)?;
-        let status = run_job(job, runner, &source, request, &base, tools, &mut result, &mut stages, &mut failure)?;
+        // Every job starts in an empty workspace; actions/checkout fills it.
+        if workspace.exists() {
+            std::fs::remove_dir_all(&workspace)
+                .with_context(|| format!("이전 workspace를 지우지 못했어요: {}", workspace.display()))?;
+        }
+        std::fs::create_dir_all(&workspace)?;
+        let mut runner = Runner::new(&directory.join("runner").join(&job.id), &workspace, tools.platform)?;
+        let tracking = format!("build-machine-{}-{}-{}", std::process::id(), job.id, build_machine_core::now());
+        for (key, value) in runner_context(request, job, &tracking) {
+            runner.set(key, &value);
+        }
+        let status = run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure)?;
         finished.insert(job.id.as_str(), status);
+        #[cfg(target_os = "linux")]
+        for process in crate::runner::terminate_orphans(&tracking) {
+            println!("Terminate orphan process: pid {process}");
+        }
+        #[cfg(not(target_os = "linux"))]
+        result.limits.push(
+            "Processes a job leaves running are not terminated at its end on this platform, as a runner terminates them.".to_owned(),
+        );
     }
     for (stage, reason) in &request.skips {
         let present = stages.get(stage.as_str()).is_some_and(|stage| !stage.steps.is_empty());

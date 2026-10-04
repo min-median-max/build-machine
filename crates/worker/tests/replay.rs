@@ -53,6 +53,7 @@ jobs:
         }))
         .unwrap(),
         archive: String::new(),
+        history: None,
         target: String::new(),
         bundle: None,
         framework: None,

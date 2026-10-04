@@ -24,6 +24,9 @@ pub struct Runner {
     paths: Vec<PathBuf>,
     /// What each step with an `id` wrote to `GITHUB_OUTPUT`.
     outputs: Outputs,
+    /// The job's own runner variables: `GITHUB_SHA`, `GITHUB_REF`,
+    /// `GITHUB_JOB`, `RUNNER_TRACKING_ID` and the like.
+    context: Vec<(String, String)>,
 }
 
 /// The files one step may write.
@@ -49,7 +52,14 @@ impl Runner {
             variables: Vec::new(),
             paths: Vec::new(),
             outputs: Outputs::new(),
+            context: Vec::new(),
         })
+    }
+
+    /// Set a runner variable every step of the job sees.
+    pub fn set(&mut self, key: &str, value: &str) {
+        self.context.retain(|(existing, _)| existing != key);
+        self.context.push((key.to_owned(), value.to_owned()));
     }
 
     /// Put a directory in front of PATH for every later step.
@@ -123,6 +133,9 @@ impl Runner {
         ];
         for (key, value) in runner {
             set(&mut environment, key, value);
+        }
+        for (key, value) in &self.context {
+            set(&mut environment, key, value.clone());
         }
         let separator = if cfg!(windows) { ";" } else { ":" };
         let inherited = environment
@@ -198,4 +211,40 @@ fn check_name(name: &str) -> Result<()> {
         bail!("GITHUB_ENV의 변수 이름이 올바르지 않아요: {name}");
     }
     Ok(())
+}
+
+/// Terminate what a job left running, as a runner does at the end of a job.
+///
+/// GitHub's runner gives every step `RUNNER_TRACKING_ID` and, when the job
+/// ends, terminates each process that still carries it ("Cleaning up orphan
+/// processes"). A server a step started in the background would otherwise
+/// outlive the job and hold its ports in the next replay. A process that
+/// replaced its environment, as `sudo` does, no longer carries the variable
+/// and is left running there too.
+#[cfg(target_os = "linux")]
+pub fn terminate_orphans(tracking: &str) -> Vec<String> {
+    let wanted = format!("RUNNER_TRACKING_ID={tracking}");
+    let mut terminated = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else { return terminated };
+    let own = std::process::id();
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+        if pid == own {
+            continue;
+        }
+        let Ok(environment) = std::fs::read(entry.path().join("environ")) else { continue };
+        if !environment.split(|byte| *byte == 0).any(|item| item == wanted.as_bytes()) {
+            continue;
+        }
+        let name = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default().trim().to_owned();
+        if unsafe { kill(pid as i32, 9) } == 0 {
+            terminated.push(format!("{pid} ({name})"));
+        }
+    }
+    terminated
+}
+
+#[cfg(target_os = "linux")]
+extern "C" {
+    fn kill(pid: i32, signal: i32) -> i32;
 }

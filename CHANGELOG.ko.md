@@ -11,13 +11,15 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - `$GITHUB_ENV`와 `$GITHUB_PATH`가 단계의 변수와 PATH 항목을 이후 단계로 넘기고, `GITHUB_WORKSPACE`, `RUNNER_TEMP`, `RUNNER_OS`, `RUNNER_ARCH`를 설정합니다.
 - `run:` 블록은 Linux와 macOS에서 `/bin/sh -eu`가 아니라 runner처럼 `bash -e`로 실행합니다. 재현은 workflow의 `rust-toolchain.toml`을 덮어쓰던 `RUSTUP_TOOLCHAIN`을 더 이상 설정하지 않습니다.
 - build 단계가 없는 workflow는 test·smoke처럼 `# build-machine: skip build reason=...`로 이유를 밝힐 수 있습니다.
-- 단계 키 `shell`, `continue-on-error`와 어댑터가 반영하지 않는 setup action 입력은 버려지지 않고 검증에서 실패합니다. 스냅샷에는 Git 기록이 없으므로 `actions/checkout`의 `fetch-depth`는 제한으로 기록합니다.
+- 단계 키 `shell`, `continue-on-error`와 어댑터가 반영하지 않는 setup action 입력은 버려지지 않고 검증에서 실패합니다.
 - README에 적힌 대로 `cargo xtask`가 동작합니다. 워크스페이스에 `xtask` alias가 없어서 `cargo xtask worker --os linux`, `cargo xtask test`, `cargo xtask build --run`이 "no such command"로 실패했습니다.
 - 개발 빌드는 자신을 컴파일한 워크스페이스를 사용합니다. `--root` 없이 실행한 `target/debug/build-machine`은 자기 위치에서 위로 찾다가 Tauri가 `target/debug`에 복사한 `machine.json`에서 멈췄고, `ci run`이 "The named build-machine share already belongs to another directory"로 실패했습니다. 워크스페이스 밖의 실행 파일은 이제 기본 root가 없고 `--root`를 요구합니다. 이전에는 명령줄이 현재 디렉터리로 대신했습니다.
 - 시간 제한은 workflow의 것입니다. job은 자신의 `timeout-minutes` 또는 GitHub의 360분 동안, 단계는 job에 남은 시간 안에서 자신의 `timeout-minutes`만큼 실행합니다. 이전에는 어떤 workflow도 선언하지 않은 스테이지별 고정 제한(test 단계 30분)으로 단계를 끊었습니다. 자신의 제한을 넘은 단계는 실패하고, 제한을 넘은 job은 취소되어 `cancelled()`가 참이 되며 그 뒤로는 취소 뒤에도 실행하는 단계만 실행합니다.
 - 재현이 구현하지 않은 job 키와 workflow 키는 검증에서 실패합니다. job의 `if`, `continue-on-error`, `defaults`, `outputs`, `environment`와 workflow `defaults`는 무시됐습니다. workflow `env`도 무시됐고 이제 모든 단계에 전달됩니다. job마다 `$GITHUB_ENV`, `$GITHUB_PATH`, 상태를 따로 두고, job은 `needs`의 job이 성공했을 때만 실행하며, 다른 운영체제의 job을 기다리는 job은 검증에서 실패합니다.
 - 단계는 프로세스가 끝나면 끝납니다. 단계의 출력을 잡고 있는 백그라운드 프로세스(`make test-servers`가 남기는 로그 reader)가 끝날 때까지 단계가 끝나지 않았습니다. 이제 GitHub runner처럼 출력을 5초 더 읽고, 그 프로세스는 그대로 둡니다.
 - 단계 출력이 GitHub처럼 동작합니다. `id`가 있는 `run` 단계가 `$GITHUB_OUTPUT`에 쓰고, 같은 job의 이후 단계가 `if:`, `run:`, `env`, `working-directory`, 어댑터가 읽는 `with` 입력에서 `${{ steps.<id>.outputs.<name> }}`을 읽습니다. `==`, `!=`, 문자열·숫자 리터럴과 GitHub의 `&&`·`||` 값 규칙도 읽습니다. 검증은 참조를 확인하고, 값은 단계를 실행할 때 채웁니다. orm의 `setup-php` 단계는 검증이 받아들일 수 없던 `php-min` 단계의 출력에서 버전을 받습니다. 로컬 값이 없는 `env` 표현식은 실행 중에 빈 값으로 바뀌었는데, 이제 `run:`이나 `working-directory`의 표현식처럼 검증에서 실패합니다.
+- `actions/checkout`이 runner처럼 Git 저장소를 만듭니다. 스냅샷에 `.git`이 없어서 `git log`, `git ls-files`, `git grep`을 읽는 orm 검사가 실패했습니다. 이제 컨트롤러가 저장소의 branch, tag, `HEAD`를 Git bundle로 archive 옆에 보내고, checkout은 로컬 mirror를 거쳐 `actions/checkout`의 명령으로 가져옵니다. 기본은 commit 하나, `fetch-depth: 0`은 모든 branch와 tag이며, 재현하는 branch나 tag를 checkout합니다. 작업 트리를 재현하면 커밋하지 않은 수정·삭제·추적하지 않는 파일을 재현하는 commit 위에 stage합니다. 이 두 가지와 기록이 GitHub remote가 아니라 로컬 저장소의 것이라는 점은 제한으로 기록합니다. 다른 것을 checkout하게 하는 입력(`ref`, `path`, `submodules` 등)은 무시되지 않고 검증에서 실패합니다.
+- 모든 job은 `<work>/<저장소>/<저장소>`의 빈 `GITHUB_WORKSPACE`에서 시작합니다. 이전에는 같은 소스의 이전 재현이 풀어 둔 소스를 그 재현이 남긴 것과 함께 다시 썼고, checkout 전 단계도 runner에는 아직 없는 파일을 봤습니다. `GITHUB_SHA`, `GITHUB_REF`, `GITHUB_REF_NAME`, `GITHUB_REF_TYPE`, `GITHUB_EVENT_NAME`, `GITHUB_JOB`을 설정합니다. Linux에서는 job이 끝나면 runner처럼 그 job의 `RUNNER_TRACKING_ID`를 가진 프로세스를 종료하고, 다른 플랫폼에서는 제한으로 기록합니다. 머신 자체가 새 이미지가 아니라는 점은 모든 재현의 제한으로 기록합니다.
 
 ## 0.1.0
 

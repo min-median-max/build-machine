@@ -109,3 +109,21 @@ fn a_job_cannot_need_a_job_of_another_platform() {
     .unwrap_err();
     assert!(format!("{error:#}").contains("needs"), "{error:#}");
 }
+
+/// `actions/checkout` reads `fetch-depth` and `fetch-tags`; an input that
+/// would check out something else fails validation instead of being ignored.
+#[test]
+fn checkout_inputs_are_read_or_refused() {
+    let checkout = |with: &str| {
+        load(&format!(
+            "name: ci\non: workflow_dispatch\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@v5\n        with:\n          {with}\n      - run: make check\n"
+        ))
+    };
+    checkout("fetch-depth: 0").unwrap();
+    checkout("fetch-tags: true").unwrap();
+    for refused in ["ref: main", "path: src", "submodules: true", "fetch-depth: all", "fetch-tags: yes"] {
+        let error = checkout(refused).unwrap_err();
+        let name = refused.split(':').next().unwrap();
+        assert!(format!("{error:#}").contains(name), "{refused}: {error:#}");
+    }
+}

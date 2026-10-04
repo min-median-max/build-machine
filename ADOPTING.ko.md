@@ -106,9 +106,20 @@ PowerShell은 모든 줄을 실행하고 마지막 종료 코드만 보고하므
 셸 `run` 단계는 쓰인 그대로, runner처럼 Linux와 macOS에서는 `bash -e`로,
 Windows에서는 PowerShell로 실행합니다. 단계는 workflow 순서대로 실행합니다. 각 단계는
 `$GITHUB_ENV`로 변수를, `$GITHUB_PATH`로 PATH를 이후 단계에 넘길 수 있고,
-`GITHUB_WORKSPACE`, `RUNNER_TEMP`, `RUNNER_OS`, `RUNNER_ARCH`가 설정됩니다.
-`actions/checkout`은 `.git`이 없는 소스 스냅샷으로 대신하며, 1이 아닌
-`fetch-depth`는 제한으로 기록합니다.
+`GITHUB_WORKSPACE`, `RUNNER_TEMP`, `RUNNER_OS`, `RUNNER_ARCH`, `GITHUB_SHA`,
+`GITHUB_REF`, `GITHUB_REF_NAME`, `GITHUB_EVENT_NAME`, `GITHUB_JOB`이 설정됩니다.
+
+**Checkout** — 모든 job은 runner처럼 빈 `GITHUB_WORKSPACE`
+(`<work>/<저장소>/<저장소>`)에서 시작하고, `actions/checkout`이 그 action의 명령으로
+재현하는 revision의 Git 저장소를 만듭니다. 기본은 commit 하나, `fetch-depth: 0`은 모든
+branch와 tag이며, 재현하는 branch나 tag를 checkout합니다(commit은 detached로 checkout).
+기록은 Git bundle로 보낸 이 저장소 자신의 branch, tag, `HEAD`이고 `origin`인 로컬
+mirror를 거쳐 가져옵니다. GitHub remote가 아니라는 점은 제한으로 기록합니다. 작업 트리를
+재현하면 커밋하지 않은 수정·삭제·추적하지 않는 파일을 재현하는 commit 위에 stage해 두므로
+`git ls-files`와 `git grep`은 그것을 보고 `git log`는 실제 commit만 봅니다. 이것도
+제한으로 기록합니다. `ref`, `repository`, `path`, `submodules`처럼 다른 것을
+checkout하게 하는 입력은 검증에서 실패합니다. job이 끝나면 runner처럼 그 job의
+`RUNNER_TRACKING_ID`를 가진 프로세스를 종료합니다(Linux).
 
 **Job** — job에는 `name`, `runs-on`, `needs`, `env`, `steps`, `timeout-minutes`를,
 workflow에는 `name`, `run-name`, `on`, `env`, `jobs`, `permissions`, `concurrency`를
