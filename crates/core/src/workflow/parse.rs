@@ -422,6 +422,12 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
                 bail!("{name}의 with 입력 '{input}'은 아직 지원하지 않아요. 지원 입력: {}", accepted.join(", "));
             }
         }
+        if let Some(coverage) = with.get("coverage").filter(|_| adapter == Adapter::PhpSetup) {
+            // An expression is checked when the step runs, with its value.
+            if !coverage.contains("${{") {
+                super::adapter::PhpCoverage::parse(coverage).with_context(|| format!("job {job_id}의 step {index} ({name})"))?;
+            }
+        }
         if adapter == Adapter::Checkout {
             checkout_inputs(&with).with_context(|| format!("job {job_id}의 step {index} ({name})"))?;
             checkout_target(&with).with_context(|| format!("job {job_id}의 step {index} ({name})"))?;

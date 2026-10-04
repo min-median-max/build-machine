@@ -57,7 +57,11 @@ on a runner. A release with no such build, or a declared extension the build
 does not carry, fails the step with the reason; nothing else stands in. The
 release must run, with its declared extensions, before it becomes `php`; if it
 does not, the step fails naming the libraries the machine lacks and the
-previous selection is left in place.
+previous selection is left in place. `coverage: none` disables Xdebug and PCOV
+in every SAPI of the release, and `xdebug` (`xdebug3`) or `pcov` enables that
+driver and disables the other, as setup-php does; the release's `php -m` after
+the step must agree, or the step fails naming the driver. Any other value fails
+validation.
 
 Those builds load libraries the runner image carries. The Linux profile of
 [machine.json](machine.json) therefore declares the image it stands in for

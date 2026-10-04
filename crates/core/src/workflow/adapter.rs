@@ -159,3 +159,28 @@ pub fn stage_for_shell(name: &str, run: &str) -> &'static str {
 }
 
 pub const STAGE_ORDER: [&str; 5] = ["setup", "test", "build", "smoke", "release"];
+
+/// setup-php's `coverage` input: which coverage driver the PHP loads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhpCoverage {
+    /// Neither Xdebug nor PCOV.
+    None,
+    /// Xdebug, with PCOV disabled.
+    Xdebug,
+    /// PCOV, with Xdebug disabled.
+    Pcov,
+}
+
+impl PhpCoverage {
+    /// Read the input as setup-php does, without regard to case. `xdebug3`
+    /// is Xdebug on PHP 8; `xdebug2` does not exist for PHP 8, and any other
+    /// value is refused rather than ignored.
+    pub fn parse(value: &str) -> anyhow::Result<PhpCoverage> {
+        Ok(match value.trim().to_ascii_lowercase().as_str() {
+            "none" => PhpCoverage::None,
+            "xdebug" | "xdebug3" => PhpCoverage::Xdebug,
+            "pcov" => PhpCoverage::Pcov,
+            other => anyhow::bail!("setup-php coverage '{other}'는 지원하지 않아요. none, xdebug, xdebug3, pcov 중 하나여야 해요."),
+        })
+    }
+}

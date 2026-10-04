@@ -154,8 +154,26 @@ fn the_php_plan_reads_the_version_file_and_refuses_what_it_does_not_install() {
     assert!(php_plan(&step(Adapter::PhpSetup, &[]), &read).is_err(), "a version is required");
     let tools = step(Adapter::PhpSetup, &[("php-version", "8.5"), ("tools", "phpunit")]);
     assert!(php_plan(&tools, &read).is_err());
-    let coverage = step(Adapter::PhpSetup, &[("php-version", "8.5"), ("coverage", "xdebug")]);
+    let coverage = step(Adapter::PhpSetup, &[("php-version", "8.5"), ("coverage", "phpdbg")]);
     assert!(php_plan(&coverage, &read).is_err());
+}
+
+/// `coverage: none` disables Xdebug and PCOV; `xdebug` and `pcov` select one
+/// and disable the other, as setup-php does. The release's `php -m` after the
+/// step proves it, naming what is still loaded.
+#[test]
+fn coverage_disables_and_selects_the_drivers_as_setup_php_does() {
+    use build_machine_core::workflow::PhpCoverage;
+    use build_machine_worker::actions::{coverage_change, coverage_check};
+    assert_eq!(coverage_change(PhpCoverage::None), (vec!["xdebug", "pcov"], None));
+    assert_eq!(coverage_change(PhpCoverage::Xdebug), (vec!["pcov"], Some("xdebug")));
+    assert_eq!(coverage_change(PhpCoverage::Pcov), (vec!["xdebug"], Some("pcov")));
+    let loaded = "[PHP Modules]\nCore\npcov\nxdebug\n\n[Zend Modules]\nXdebug\n";
+    let error = coverage_check(PhpCoverage::None, loaded).unwrap_err().to_string();
+    assert!(error.contains("xdebug") && error.contains("pcov"), "{error}");
+    coverage_check(PhpCoverage::None, "[PHP Modules]\nCore\n\n[Zend Modules]\n").unwrap();
+    coverage_check(PhpCoverage::Pcov, "[PHP Modules]\nCore\npcov\n").unwrap();
+    assert!(coverage_check(PhpCoverage::Pcov, "[PHP Modules]\nCore\n").unwrap_err().to_string().contains("pcov"));
 }
 
 /// A PHP that cannot start is named by the libraries it lacks, as `ldd`

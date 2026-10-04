@@ -16,7 +16,7 @@ use crate::provision::Tools;
 use crate::runner::Runner;
 use crate::stream;
 use anyhow::{bail, Context, Result};
-use build_machine_core::workflow::Step;
+use build_machine_core::workflow::{PhpCoverage, Step};
 use build_machine_core::Platform;
 use std::path::Path;
 
@@ -333,23 +333,57 @@ pub fn setup_go(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runne
     Ok(Installed { summary, limits })
 }
 
-/// The PHP version and extensions of a `setup-php` step.
+/// The PHP version, extensions and coverage of a `setup-php` step.
 pub fn php_plan(step: &Step, read: &dyn Fn(&str) -> Result<String>) -> Result<(String, Vec<String>)> {
+    let plan = php_step(step, read)?;
+    Ok((plan.version, plan.extensions))
+}
+
+/// The coverage drivers setup-php disables and the one it selects.
+pub fn coverage_change(coverage: PhpCoverage) -> (Vec<&'static str>, Option<&'static str>) {
+    match coverage {
+        PhpCoverage::None => (vec!["xdebug", "pcov"], None),
+        PhpCoverage::Xdebug => (vec!["pcov"], Some("xdebug")),
+        PhpCoverage::Pcov => (vec!["xdebug"], Some("pcov")),
+    }
+}
+
+/// Check `php -m` against the coverage: the disabled drivers are not loaded
+/// and the selected one is. A failure names each driver that is wrong.
+pub fn coverage_check(coverage: PhpCoverage, modules: &str) -> Result<()> {
+    let loaded: Vec<String> = modules.lines().map(|line| line.trim().to_ascii_lowercase()).collect();
+    let is_loaded = |name: &str| loaded.iter().any(|line| line == name);
+    let (disabled, selected) = coverage_change(coverage);
+    let still: Vec<&str> = disabled.into_iter().filter(|name| is_loaded(name)).collect();
+    if !still.is_empty() {
+        bail!("setup-php coverage가 끄는 드라이버가 아직 로드돼 있어요: {}", still.join(", "));
+    }
+    if let Some(selected) = selected.filter(|name| !is_loaded(name)) {
+        bail!("setup-php coverage가 고른 드라이버 {selected}가 로드되지 않았어요.");
+    }
+    Ok(())
+}
+
+/// What a `setup-php` step declares.
+pub struct PhpStep {
+    pub version: String,
+    pub extensions: Vec<String>,
+    /// Its `coverage`, when it declares one.
+    pub coverage: Option<PhpCoverage>,
+}
+
+pub fn php_step(step: &Step, read: &dyn Fn(&str) -> Result<String>) -> Result<PhpStep> {
+    let coverage = step.with.get("coverage").map(|value| PhpCoverage::parse(value)).transpose()?;
     if let Some(tools) = step.with.get("tools") {
         if tools.trim() != "composer" {
             bail!("setup-php tools '{tools}'는 아직 지원하지 않아요. composer만 설치해요.");
-        }
-    }
-    if let Some(coverage) = step.with.get("coverage") {
-        if coverage.trim() != "none" {
-            bail!("setup-php coverage '{coverage}'는 아직 지원하지 않아요.");
         }
     }
     let version = declared_version(step, "php-version", "php-version-file", read)?
         .context("setup-php에는 php-version 또는 php-version-file이 필요해요.")?;
     let version = php_version(&version)?;
     let extensions = php_extensions(step.with.get("extensions"))?;
-    Ok((version, extensions))
+    Ok(PhpStep { version, extensions, coverage })
 }
 
 /// The archive of setup-php's cached build of a PHP release, as its
@@ -505,6 +539,32 @@ fn verify_php(version: &str, extensions: &[String], environment: &[(String, Stri
     bail!("PHP {version}에 선언한 확장이 없어요: {}", details.join("; "))
 }
 
+/// setup-php's coverage on Linux, as root: each disabled driver loses its
+/// `conf.d` link in every SAPI of the release and its line in each `php.ini`
+/// (`disable_extension_helper`); the selected driver is enabled in every
+/// SAPI, and PCOV gets `pcov.enabled=1` as setup-php sets it. `$1` is the
+/// release, `$2` the selected driver or empty, the rest the disabled ones.
+#[cfg(target_os = "linux")]
+const PHP_COVERAGE: &str = r#"set -e
+version=$1
+selected=$2
+shift 2
+for extension in "$@"; do
+  find /etc/php/"$version" -name "*-$extension.ini" -not -path "*mods-available*" -delete
+  for ini in /etc/php/"$version"/*/php.ini; do
+    [ -f "$ini" ] && sed -Ei "/=(.*\/)?\"?$extension(.so)?\"?$/d" "$ini"
+  done
+done
+if [ -n "$selected" ]; then
+  phpenmod -v "$version" -s ALL "$selected"
+  if [ "$selected" = pcov ]; then
+    for ini in /etc/php/"$version"/*/php.ini; do
+      [ -f "$ini" ] && { grep -q '^pcov.enabled=1' "$ini" || echo 'pcov.enabled=1' >> "$ini"; }
+    done
+  fi
+fi
+"#;
+
 /// Run a command as root through `sudo`, which a runner's account may use
 /// without a password; a password prompt fails the step instead of waiting.
 #[cfg(target_os = "linux")]
@@ -523,7 +583,7 @@ fn as_root(program: &str, arguments: &[&str], environment: &[(String, String)]) 
 /// tools on PATH, and Composer is installed.
 #[cfg(target_os = "linux")]
 pub fn setup_php(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runner) -> Result<Installed> {
-    let (version, extensions) = php_plan(step, &read_in(workspace))?;
+    let PhpStep { version, extensions, coverage } = php_step(step, &read_in(workspace))?;
     let environment = runner_environment(tools, runner)?;
     // The install registers alternatives; what was selected before is kept
     // to put back if the release does not run.
@@ -574,10 +634,31 @@ pub fn setup_php(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runn
         &["-r", "echo 'PHP ', PHP_MAJOR_VERSION, '.', PHP_MINOR_VERSION, PHP_EOL;"],
         &format!("PHP {version}"),
     )?;
+    let coverage_summary = match coverage {
+        Some(coverage) => {
+            let (disabled, selected) = coverage_change(coverage);
+            let mut arguments = vec!["-c", PHP_COVERAGE, "php-coverage", &version, selected.unwrap_or("")];
+            arguments.extend(disabled.iter().copied());
+            as_root("bash", &arguments, &environment)?;
+            let modules = capture_in(tools, runner, &format!("php{version}"), &["-m"])?;
+            coverage_check(coverage, &modules)?;
+            format!(
+                "; coverage {}: {} disabled{}",
+                step.with.get("coverage").map(String::as_str).unwrap_or_default(),
+                disabled.join(", "),
+                selected.map(|name| format!(", {name} enabled")).unwrap_or_default()
+            )
+        }
+        None => String::new(),
+    };
     let composer = install_composer(tools)?;
     runner.add_path(composer.0.clone());
     Ok(Installed {
-        summary: format!("PHP {version} from {source}, extensions {}; Composer {}.", extensions.join(", "), composer.1),
+        summary: format!(
+            "PHP {version} from {source}, extensions {}{coverage_summary}; Composer {}.",
+            extensions.join(", "),
+            composer.1
+        ),
         limits: Vec::new(),
     })
 }

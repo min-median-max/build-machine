@@ -46,6 +46,7 @@ Workflow replay runs a workflow the way a runner does, so a repository's CI can 
 - A replay job runs in the runner's layout under the home directory: `GITHUB_WORKSPACE` is `$HOME/work/<repository>/<repository>`, `RUNNER_WORKSPACE` `$HOME/work/<repository>`, and the runner's files and `RUNNER_TEMP` are under `$HOME/work/_temp`. Run records and artifacts stay in the project's directory. The workspace under the worker's state directory was about 85 characters long, and orm's MySQL socket under it passed the 107-byte limit of a unix socket path.
 - A job's `if:` and `permissions` are accepted. The `if` is read as GitHub reads it: status functions over the jobs before the job, `needs.<job>.result`, and the replay's `github` values, with `success()` as the default; a job that does not run is recorded as skipped with the reason. orm's docs-pages.yml failed validation on its deploy job's `if`.
 - A job environment's `url` may read the outputs of the job's steps, as orm's deploy job reads `${{ steps.deployment.outputs.page_url }}`; validation checks the step exists, and the URL is recorded as written.
+- setup-php's `coverage` input is applied: `none` disables Xdebug and PCOV in every SAPI of the release, `xdebug` or `pcov` enables that driver and disables the other, and the release's `php -m` after the step must agree. The adapter accepted `none` and left both drivers loaded, so orm's perf gate refused to measure.
 
 ## 0.1.0
 

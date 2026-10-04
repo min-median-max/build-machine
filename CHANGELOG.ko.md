@@ -46,6 +46,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - 재현 job은 홈 디렉터리 아래 runner와 같은 배치에서 실행합니다. `GITHUB_WORKSPACE`는 `$HOME/work/<저장소>/<저장소>`, `RUNNER_WORKSPACE`는 `$HOME/work/<저장소>`이고, runner 파일과 `RUNNER_TEMP`는 `$HOME/work/_temp` 아래에 둡니다. 실행 기록과 산출물은 프로젝트 디렉터리에 그대로 둡니다. 워커 상태 디렉터리 아래의 workspace는 약 85자였고, 그 아래의 orm MySQL 소켓이 unix 소켓 경로의 107 byte 제한을 넘었습니다.
 - job의 `if:`와 `permissions`를 받습니다. `if`는 GitHub처럼 읽습니다. 앞선 job들에 대한 상태 함수, `needs.<job>.result`, 재현의 `github` 값을 읽고 기본값은 `success()`입니다. 실행하지 않은 job은 이유와 함께 skipped로 기록합니다. orm의 docs-pages.yml은 deploy job의 `if` 때문에 검증에서 실패했습니다.
 - job environment의 `url`은 orm의 deploy job이 `${{ steps.deployment.outputs.page_url }}`을 읽듯 그 job 단계의 출력을 읽을 수 있습니다. 검증은 그 단계가 있는지 확인하고, URL은 쓰인 그대로 기록합니다.
+- setup-php의 `coverage` 입력을 적용합니다. `none`은 그 릴리스의 모든 SAPI에서 Xdebug와 PCOV를 끄고, `xdebug`나 `pcov`는 그 드라이버를 켜고 다른 하나를 끄며, 단계 뒤 그 릴리스의 `php -m`이 이와 맞아야 합니다. 이전에는 어댑터가 `none`을 받고도 두 드라이버를 로드된 채 두어서 orm의 perf gate가 측정을 거부했습니다.
 
 ## 0.1.0
 
