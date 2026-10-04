@@ -37,6 +37,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - `softprops/action-gh-release`가 대신하는 release를 기록합니다. 재현한 tag나 `tag_name`의 tag와, `files`와 `body_path`의 파일을 크기, SHA-256과 함께 단계 출력에 dry run으로 남깁니다. 이전에는 "external GitHub service replaced by local artifact store"만 기록하고 아무것도 보관하지 않아서, 아무 파일에도 맞지 않는 `files` 패턴이 드러나지 않았고 rehearsal이 GitHub과 비교할 asset 목록이 없었습니다. 이제 `tag_name` 없는 branch의 재현은 action처럼 실패하고, `*`와 `?` 외의 glob 형식을 쓴 `files` 패턴은 단계를 실패시키며, `files`, `body_path`, `tag_name` 외의 입력은 검증에서 실패합니다.
 - Linux 게스트가 비운 공간을 Mac에 돌려줍니다. 컨트롤러가 setup, build, release, 재현 뒤에 워커의 새 권한 명령 `reclaim`(`fstrim --all`)을 실행하고, VM 디스크 중 Parallels online compaction이 꺼진 것을 켭니다. 이전에는 지운 파일이 VM 이미지에 할당된 채 남았습니다. 이미지의 겉보기 크기는 가장 컸던 크기에 머물고, 줄어드는 것은 할당된 블록(`du -k`)입니다.
 - Parallels가 시작하지 못한 게스트 명령을 다시 시작합니다. Parallels 27의 `prlctl exec`는 열 번에 한 번꼴로 명령이 실행되기 전에 `PrlJob_GetRetCode: Invalid argument` 또는 `PrlJob_GetResult: Invalid argument`만 출력하고 255로 끝납니다(150번 중 그렇게 실패한 18개 명령 모두 실행되지 않았음). 컨트롤러는 그런 명령을 최대 다섯 번까지 시작하고 시도마다 로그에 남기며, 출력을 낸 명령은 다시 실행하지 않고, 끝내 실패하면 Parallels 오류를 밝혀 실패합니다.
+- 워커가 `protocol` 명령을 거부할 때만 controller보다 오래된 워커로 보고합니다. Parallels가 명령을 시작하지 못한 것처럼 그 밖의 이유로 묻지 못한 경우는 그 원인 그대로 보고합니다. 이전에는 전송 오류를 오래된 워커로 보고했습니다.
 
 ## 0.1.0
 

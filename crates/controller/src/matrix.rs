@@ -167,9 +167,20 @@ fn run_platform(
 fn check_protocol(transport: &dyn Transport, platform: Platform, log: &OperationLog) -> Result<()> {
     let expected = build_machine_core::request::PROTOCOL;
     let hint = build_machine_core::request::rebuild_hint().replace("<os>", platform.as_str());
-    let reply = transport.invoke(&["protocol".to_owned()], log).with_context(|| {
-        format!("{platform} 워커가 protocol을 알려주지 않았어요. controller의 protocol {expected}보다 오래된 워커예요. {hint}")
-    })?;
+    let reply = match transport.invoke(&["protocol".to_owned()], log) {
+        Ok(reply) => reply,
+        // A worker built before `protocol` existed rejects the subcommand.
+        // Any other failure — Parallels not starting the command among them —
+        // is reported as itself.
+        Err(error)
+            if error
+                .downcast_ref::<crate::transport::CommandFailed>()
+                .is_some_and(|failed| failed.output.contains("unrecognized subcommand")) =>
+        {
+            bail!("{platform} 워커가 protocol 명령을 몰라요. controller의 protocol {expected}보다 오래된 워커예요. {hint}")
+        }
+        Err(error) => return Err(error.context(format!("{platform} 워커에 protocol을 묻지 못했어요"))),
+    };
     let reported = reply.lines().rev().map(str::trim).find(|line| !line.is_empty()).unwrap_or("없음");
     if reported != expected {
         bail!("{platform} 워커의 protocol {reported}이 controller의 protocol {expected}과 달라요. {hint}");

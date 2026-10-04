@@ -120,3 +120,25 @@ fn a_replay_that_ran_no_step_fails_the_platform() {
     assert!(!result.success && !report.succeeded(), "{report:#?}");
     assert!(error.contains("실행된 workflow 단계가 없어요"), "{error}");
 }
+
+/// A worker built before `protocol` existed rejects the subcommand; only that
+/// is reported as an old worker.
+#[test]
+fn a_worker_without_the_protocol_command_is_reported_as_old() {
+    let fixture = fixture("echo \"error: unrecognized subcommand 'protocol'\" >&2; exit 2");
+    let report = replay(&fixture);
+    let error = report.results[&Platform::Macos].error.clone().unwrap_or_default();
+    assert!(error.contains("오래된 워커") && error.contains("cargo xtask worker"), "{error}");
+}
+
+/// When the question never reached the worker — Parallels did not start the
+/// command — the error names that, not an old worker. Run 20261004-171833-591581
+/// reported "older worker" for a worker of the controller's own protocol.
+#[test]
+fn a_transport_failure_is_not_reported_as_an_old_worker() {
+    let fixture = fixture("echo 'PrlJob_GetRetCode: Invalid argument. An invalid argument was passed.' >&2; exit 255");
+    let report = replay(&fixture);
+    let error = report.results[&Platform::Macos].error.clone().unwrap_or_default();
+    assert!(!error.contains("오래된 워커"), "{error}");
+    assert!(error.contains("PrlJob_GetRetCode"), "{error}");
+}
