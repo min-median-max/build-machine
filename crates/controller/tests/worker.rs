@@ -142,3 +142,25 @@ fn a_transport_failure_is_not_reported_as_an_old_worker() {
     assert!(!error.contains("오래된 워커"), "{error}");
     assert!(error.contains("PrlJob_GetRetCode"), "{error}");
 }
+
+/// A replay whose step failed exits 1 after writing its report. The result
+/// file carried only the last 2,500 characters of the worker's output as the
+/// error, and no step; the report was only a line of the platform log.
+#[test]
+fn a_failed_replay_keeps_its_whole_report() {
+    let protocol = build_machine_core::request::PROTOCOL;
+    let long_output = "x".repeat(6000);
+    let report = format!(
+        r#"{{"success":false,"status":"failed","finishedAt":"now","attempts":1,"log":"","error":"step 2 (make check) exited with 2","stages":{{"test":{{"status":"failed","startedAt":"now","error":"step 2 (make check) failed","steps":[{{"index":2,"name":"make check","adapter":"run","status":"failed","startedAt":"now","command":"make check","exitCode":2,"output":"{long_output}"}}]}}}}}}"#
+    );
+    let fixture = fixture(&format!(
+        "if [ \"$1\" = protocol ]; then echo {protocol}; exit 0; fi\necho BUILD_MACHINE_REPORT_BEGIN\necho '{report}'\necho BUILD_MACHINE_REPORT_END\necho 'ERROR: step 2 (make check) exited with 2' >&2\nexit 1"
+    ));
+    let run = replay(&fixture);
+    let result = &run.results[&Platform::Macos];
+    assert!(!result.success, "{run:#?}");
+    assert_eq!(result.error.as_deref(), Some("step 2 (make check) exited with 2"));
+    let step = &result.stages["test"].steps[0];
+    assert_eq!(step.exit_code, Some(2));
+    assert_eq!(step.output.as_deref().map(str::len), Some(6000));
+}

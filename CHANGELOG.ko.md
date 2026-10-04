@@ -39,6 +39,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - Parallels가 시작하지 못한 게스트 명령을 다시 시작합니다. Parallels 27의 `prlctl exec`는 열 번에 한 번꼴로 명령이 실행되기 전에 `PrlJob_GetRetCode: Invalid argument` 또는 `PrlJob_GetResult: Invalid argument`만 출력하고 255로 끝납니다(150번 중 그렇게 실패한 18개 명령 모두 실행되지 않았음). 컨트롤러는 그런 명령을 최대 다섯 번까지 시작하고 시도마다 로그에 남기며, 출력을 낸 명령은 다시 실행하지 않고, 끝내 실패하면 Parallels 오류를 밝혀 실패합니다.
 - 워커가 `protocol` 명령을 거부할 때만 controller보다 오래된 워커로 보고합니다. Parallels가 명령을 시작하지 못한 것처럼 그 밖의 이유로 묻지 못한 경우는 그 원인 그대로 보고합니다. 이전에는 전송 오류를 오래된 워커로 보고했습니다.
 - Linux 작업이 끝나면 컨트롤러가 VM을 멈춘 상태로 디스크를 압축합니다. 게스트 `reclaim`, `prlctl stop`, `prl_disk_tool compact`, `prlctl start`, 게스트 대기, 그다음 `setup-system`과 `doctor` 순서입니다. 플랫폼 결과에 이미지마다 전후의 할당 bytes와 겉보기 bytes를 기록합니다. 게스트 TRIM 뒤의 online compaction은 측정한 세 번 중 한 번만 공간을 돌려줬습니다.
+- 실패한 재현이 보고서 전체를 유지합니다. 모든 스테이지와 단계의 출력과 종료 코드, 워커 자신의 오류가 남습니다. 이전에는 보고서를 쓴 뒤 0이 아닌 코드로 끝난 워커를 전송 실패로 처리해서 출력의 마지막 2,500자만 오류로 남겼습니다. 그 일부만 보여 주는 오류는 이제 그 사실을 밝히고 플랫폼 로그를 가리킵니다.
 
 ## 0.1.0
 

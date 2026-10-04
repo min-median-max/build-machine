@@ -256,7 +256,8 @@ pub struct CommandFailed {
 impl std::fmt::Display for CommandFailed {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let tail: String = self.output.chars().rev().take(2500).collect::<Vec<_>>().into_iter().rev().collect();
-        write!(formatter, "Worker failed with exit code {}.\n{tail}", self.code.unwrap_or(-1))
+        let shown = if tail.len() < self.output.len() { "the last 2500 characters of its output; the platform log holds all of it" } else { "its output" };
+        write!(formatter, "Worker failed with exit code {} ({shown}).\n{tail}", self.code.unwrap_or(-1))
     }
 }
 

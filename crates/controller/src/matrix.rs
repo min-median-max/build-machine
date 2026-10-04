@@ -228,15 +228,22 @@ fn execute_platform(
     };
     let arguments = worker_arguments(operation, request.as_deref());
     let output = transport.invoke(&arguments, log);
-    let result = output.and_then(|output| {
-        if operation.action == Action::Ci {
-            let mut result = parse_report(&output)?;
+    let result = match output {
+        Ok(output) if operation.action == Action::Ci => parse_report(&output).map(|mut result| {
             result.require_executed_steps();
-            Ok(result)
-        } else {
-            Ok(PlatformResult::passed(now(), String::new()))
+            result
+        }),
+        Ok(_) => Ok(PlatformResult::passed(now(), String::new())),
+        // A replay that failed exits non-zero after writing its whole report,
+        // which is the result: every step and the error as the worker wrote it.
+        Err(error) if operation.action == Action::Ci => {
+            match error.downcast_ref::<crate::transport::CommandFailed>().filter(|failed| failed.output.contains(REPORT_BEGIN)) {
+                Some(failed) => parse_report(&failed.output),
+                None => Err(error),
+            }
         }
-    });
+        Err(error) => Err(error),
+    };
     let Some(vm) = vm else { return result };
     // The space the work freed goes back to the Mac whatever the work's result.
     match (result, give_back_space(transport.as_ref(), &vm, log)) {
