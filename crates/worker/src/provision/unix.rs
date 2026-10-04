@@ -24,7 +24,8 @@ fn missing_system_packages(tools: &Tools) -> Result<Vec<String>> {
     }
     let profile = tools.profile()?;
     let mut missing = Vec::new();
-    for package in ["git", "python3"].iter().map(|value| (*value).to_owned()).chain(profile.packages.iter().cloned()) {
+    // The machine's own packages and those of the runner image it stands in for.
+    for package in ["git", "python3"].iter().map(|value| (*value).to_owned()).chain(profile.system_packages()) {
         let arguments = vec!["-W".to_owned(), "-f=${Status}".to_owned(), package.clone()];
         match stream::capture("dpkg-query", &arguments, &tools.environment) {
             Ok(status) if status.trim() == "install ok installed" => {}

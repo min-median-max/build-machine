@@ -99,6 +99,44 @@ pub struct Profile {
     /// and a machine that has just restarted has none until someone signs in.
     #[serde(default, rename = "desktopUser")]
     pub desktop_user: Option<String>,
+    /// The GitHub runner image this machine stands in for in a workflow
+    /// replay, as far as packages make it up.
+    #[serde(default)]
+    pub image: Option<Image>,
+}
+
+/// The package set of a GitHub runner image, taken from the image's own
+/// published definition. Actions that run on that image rely on it: setup-php's
+/// cached PHP builds load libraries the image's PHP packages brought in.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Image {
+    /// The `runs-on` label of the image.
+    pub runner: String,
+    /// The image version the package set was read from.
+    pub version: String,
+    /// Where the package set comes from.
+    pub source: Vec<String>,
+    /// The apt packages the image installs, which setup installs and doctor
+    /// checks.
+    pub packages: Vec<String>,
+    /// What the image carries and this machine does not provide. A replay
+    /// records it as a limit.
+    #[serde(rename = "notProvided")]
+    pub not_provided: Vec<String>,
+}
+
+impl Profile {
+    /// Every system package setup installs: the machine's own and its runner
+    /// image's, each once.
+    pub fn system_packages(&self) -> Vec<String> {
+        let mut packages: Vec<String> = Vec::new();
+        for package in self.packages.iter().chain(self.image.iter().flat_map(|image| &image.packages)) {
+            if !packages.contains(package) {
+                packages.push(package.clone());
+            }
+        }
+        packages
+    }
 }
 
 impl Machine {

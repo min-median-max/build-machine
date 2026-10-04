@@ -54,7 +54,14 @@ machine already has is switched to, any other is setup-php's cached build for
 this Ubuntu version and architecture (shivammathur/php-ubuntu), checked against
 the sha256 GitHub publishes for it and installed through passwordless `sudo`, as
 on a runner. A release with no such build, or a declared extension the build
-does not carry, fails the step with the reason; nothing else stands in. A replay does not pin Rust either: the workflow's
+does not carry, fails the step with the reason; nothing else stands in.
+
+Those builds load libraries the runner image carries. The Linux profile of
+[machine.json](machine.json) therefore declares the image it stands in for
+(`image`: `ubuntu-26.04-arm`, the apt packages of its published toolset and its
+PHP 8.5 packages), `setup` installs them and `doctor` checks them. What of the
+image the machine does not provide is listed there and recorded as a limit of
+every replay of a job on that runner. A replay does not pin Rust either: the workflow's
 `rust-toolchain.toml` or rustup call selects it, as on a runner.
 
 Make your project work with the declared Node.js, pnpm, Rust and Go, or change

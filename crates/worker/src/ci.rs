@@ -523,6 +523,12 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         }) {
             result.limits.extend(runner_image_limit(&job.runs_on, &version_id, std::env::consts::ARCH));
         }
+        // What of the runner image the job asks for this machine does not have.
+        if let Some(image) = tools.profile()?.image.as_ref().filter(|image| image.runner == job.runs_on) {
+            for missing in &image.not_provided {
+                result.limits.push(format!("Runner image {} {}: not provided: {missing}", image.runner, image.version));
+            }
+        }
         // Every job starts in an empty workspace; actions/checkout fills it.
         if workspace.exists() {
             std::fs::remove_dir_all(&workspace)
