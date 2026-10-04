@@ -4,6 +4,7 @@
 
 workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 push하기 전에 여기서 확인할 수 있습니다.
 
+- `actions/upload-artifact`는 올린 파일을 이 Mac의 run artifact로 보관하고, `actions/download-artifact`는 run이나 `run-id`가 가리키는 이전 재현의 artifact를 `path`에 둡니다. 업로드는 제한 기록으로 대신되어 아무것도 보관하지 않았고 다운로드는 어댑터가 없었으므로, `workflow_run`으로 `validate.yml`을 잇는 soksak registry의 `merge.yml`이 검사한 pull request를 읽지 못했습니다. 비밀이나 token을 가리키는 `with` 값은 `env` 값처럼 더 이상 표현식으로 읽지 않습니다.
 - `actions/checkout`은 `repository` 없는 `ref`로 workflow 자신의 저장소를 commit된 기록에서 checkout하고, 표현식으로 준 `repository`를 재현의 `github` 값으로 읽습니다. soksak registry의 `validate.yml`은 pull request의 base commit과 head 저장소를, `publish.yml`은 `main`을 checkout하는데, 검증이 둘 다 거부했습니다.
 - `ci validate`와 `ci run`은 GitHub이 보내는 형태의 재현 event payload를 `--event-payload <file>`로 받습니다. 표현식은 거기서 `github.event.<path>`를 읽고, 단계는 그 파일을 `GITHUB_EVENT_PATH`로 받으며, payload가 없거나 workflow가 읽는 경로가 없으면 검증에서 실패합니다. soksak registry workflow는 어떤 재현도 줄 수 없던 `github.event.pull_request`와 `github.event.workflow_run`을 읽습니다.
 - `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`가 단계에 직접 또는 버전 파일로 선언한 릴리스를 설치하고 이후 단계의 PATH 앞에 둡니다. Node.js·Go 아카이브와 Composer는 nodejs.org, go.dev, getcomposer.org가 공개한 체크섬과 대조하고, 릴리스마다 자기 디렉터리를 두므로 두 번째 재현은 아무것도 설치하지 않습니다. PHP는 아래에 적은 대로 hosted runner의 setup-php처럼 설치하며, 그 릴리스를 PATH의 `php`로 정합니다. 이전에는 `setup-node`가 workflow의 선언과 상관없이 `machine.json`의 Node.js로 대신했습니다.

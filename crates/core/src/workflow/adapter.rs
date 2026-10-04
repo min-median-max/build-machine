@@ -16,6 +16,7 @@ pub enum Adapter {
     Cache,
     TauriBuild,
     ArtifactUpload,
+    ArtifactDownload,
     /// `actions/upload-pages-artifact`: the site a later deploy-pages step
     /// deploys.
     PagesArtifact,
@@ -41,6 +42,7 @@ impl Adapter {
             Adapter::Cache => "cache",
             Adapter::TauriBuild => "tauri-build",
             Adapter::ArtifactUpload => "artifact-upload",
+            Adapter::ArtifactDownload => "artifact-download",
             Adapter::PagesArtifact => "pages-artifact",
             Adapter::DeployPages => "deploy-pages",
             Adapter::Release => "release",
@@ -65,6 +67,7 @@ impl Adapter {
             "swatinem/rust-cache" | "actions/cache" => Adapter::Cache,
             "tauri-apps/tauri-action" => Adapter::TauriBuild,
             "actions/upload-artifact" => Adapter::ArtifactUpload,
+            "actions/download-artifact" => Adapter::ArtifactDownload,
             "actions/upload-pages-artifact" => Adapter::PagesArtifact,
             "actions/deploy-pages" => Adapter::DeployPages,
             "softprops/action-gh-release" => Adapter::Release,
@@ -85,7 +88,8 @@ impl Adapter {
             | Adapter::GoSetup
             | Adapter::PhpSetup
             | Adapter::RustSetup
-            | Adapter::Cache => "setup",
+            | Adapter::Cache
+            | Adapter::ArtifactDownload => "setup",
             Adapter::TauriBuild => "build",
             Adapter::ArtifactUpload | Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release => "release",
             // A shell step is classified by its own name and command; a skip
@@ -128,6 +132,14 @@ impl Adapter {
             // `preview`, `token` and the timing inputs would deploy elsewhere
             // or wait on GitHub's deployment.
             Adapter::DeployPages => &["artifact_name"],
+            // `retention-days` bounds how long GitHub keeps the artifact; the
+            // replay keeps it under the machine's retention cap. Other inputs
+            // (`if-no-files-found`, `overwrite`, compression) are not read.
+            Adapter::ArtifactUpload => &["name", "path", "retention-days"],
+            // `github-token` reads another run's artifact on GitHub; locally
+            // `run-id` names an earlier replay. `pattern` and `repository`
+            // would download something else.
+            Adapter::ArtifactDownload => &["name", "path", "run-id", "github-token"],
             // The replay records the release of `files` and `body_path` under
             // the replayed tag or `tag_name`; the other inputs would publish
             // another release.
@@ -139,7 +151,7 @@ impl Adapter {
     /// Adapters that replace an external GitHub service and must be recorded as
     /// a limit rather than reported as a completed publication.
     pub fn is_external_service(&self) -> bool {
-        matches!(self, Adapter::ArtifactUpload | Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release)
+        matches!(self, Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release)
     }
 }
 

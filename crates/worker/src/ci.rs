@@ -360,6 +360,49 @@ fn execute(
             ran
         }
         adapter if adapter.is_local_stand_in() => Ran::new(Outcome::Passed),
+        Adapter::ArtifactUpload => {
+            // The action's default name is `artifact`.
+            let name = step.with.get("name").map(String::as_str).unwrap_or("artifact");
+            let paths = step.with.get("path").context("upload-artifact에 path가 필요해요.")?;
+            let run = request.run_id.as_deref().context("요청에 run id가 없어요.")?;
+            let store = project_root(request)?.join("artifacts").join(run);
+            let count = crate::artifacts::upload(source, paths, &store, name)?;
+            let summary = if count == 0 {
+                format!("No files were found with the provided path: {paths}. No artifact will be uploaded.")
+            } else {
+                format!("Kept {count} files as the artifact {name} of run {run}.")
+            };
+            println!("{summary}");
+            result.limits.push(format!(
+                "{}: the artifact {name} is kept on this machine for later steps and replays of run {run}, not uploaded to GitHub.",
+                step.name
+            ));
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.output = Some(summary);
+            ran
+        }
+        Adapter::ArtifactDownload => {
+            let name = step
+                .with
+                .get("name")
+                .context("download-artifact의 name 없이 모든 artifact를 받는 것은 재현이 지원하지 않아요.")?;
+            let run = match step.with.get("run-id") {
+                Some(run) => run.clone(),
+                None => request.run_id.clone().context("요청에 run id가 없어요.")?,
+            };
+            let store = project_root(request)?.join("artifacts").join(&run);
+            let destination = source.join(step.with.get("path").map(String::as_str).unwrap_or("."));
+            let count = crate::artifacts::download(&store, name, &destination)?;
+            let summary = format!("Downloaded {count} files of the artifact {name} of run {run} into {}.", destination.display());
+            println!("{summary}");
+            result.limits.push(format!(
+                "{}: the artifact {name} comes from the store of run {run} on this machine, not from GitHub.",
+                step.name
+            ));
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.output = Some(summary);
+            ran
+        }
         Adapter::PagesArtifact => {
             let name = step.with.get("name").map(String::as_str).unwrap_or("github-pages");
             let path = step.with.get("path").map(String::as_str).unwrap_or("_site/");

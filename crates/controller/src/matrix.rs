@@ -49,6 +49,7 @@ fn write_request(
     workflow: Option<&build_machine_core::workflow::Workflow>,
     transport: &dyn Transport,
     state: &Path,
+    stamp: &str,
 ) -> Result<(PathBuf, String)> {
     let profile = operation.machine.profile(platform)?;
     let archive = if snapshot.archive.is_empty() {
@@ -76,6 +77,7 @@ fn write_request(
         jobs: workflow.map(|workflow| build_machine_core::workflow::jobs_for(workflow, Some(platform))).unwrap_or_default(),
         skips: workflow.map(|workflow| workflow.skips.clone()).unwrap_or_default(),
         workflow_signature: snapshot.workflow_path.as_ref().map(|_| snapshot.source_hash.clone()),
+        run_id: Some(stamp.to_owned()),
     };
     let path = state
         .join("projects")
@@ -142,7 +144,7 @@ fn run_platform(
             }
         }
     };
-    let result = execute_platform(operation, platform, snapshot, workflow, state, &log);
+    let result = execute_platform(operation, platform, snapshot, workflow, state, stamp, &log);
     let outcome = match result {
         Ok(mut result) => {
             result.log = platform_log.to_string_lossy().into_owned();
@@ -194,6 +196,7 @@ fn execute_platform(
     snapshot: Option<&Snapshot>,
     workflow: Option<&build_machine_core::workflow::Workflow>,
     state: &Path,
+    stamp: &str,
     log: &OperationLog,
 ) -> Result<PlatformResult> {
     let transport = transport(operation, platform)?;
@@ -203,7 +206,7 @@ fn execute_platform(
     // that step runs on its own before the work the desktop user must do.
     // Each platform receives the jobs its own runner label claims.
     let request = match snapshot {
-        Some(snapshot) => Some(write_request(operation, platform, snapshot, workflow, transport.as_ref(), state)?.1),
+        Some(snapshot) => Some(write_request(operation, platform, snapshot, workflow, transport.as_ref(), state, stamp)?.1),
         None => None,
     };
     if platform != Platform::Macos {

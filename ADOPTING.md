@@ -127,9 +127,17 @@ validation rather than being quietly changed into something else.
 `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`,
 `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
 `tauri-apps/tauri-action`, `actions/upload-artifact`,
-`actions/upload-pages-artifact`, `actions/deploy-pages`,
-`softprops/action-gh-release`. An action's owner and name match without regard
-to case, as on GitHub. A setup action's `with` input that its adapter does not
+`actions/download-artifact`, `actions/upload-pages-artifact`,
+`actions/deploy-pages`, `softprops/action-gh-release`. An action's owner and
+name match without regard to case, as on GitHub. upload-artifact keeps the
+files of `path` (one relative path per line, laid out under their least common
+ancestor) as the artifact `name` of the run on this machine, and a path that
+matches nothing adds none, as the action's default warning does;
+download-artifact puts the artifact `name` of the run, or of the earlier
+replay that `run-id` names, into `path`. Nothing is sent to GitHub, which each
+records as a limit; inputs other than `name`, `path` and `retention-days` for
+the upload and `name`, `path`, `run-id` and `github-token` for the download
+fail validation, and a download without `name` fails. A setup action's `with` input that its adapter does not
 honour fails validation, as do the pages actions' inputs other than `path`,
 `name` and `retention-days` for the upload and `artifact_name` for the
 deployment. The upload keeps the site as it was when the step ran for the rest

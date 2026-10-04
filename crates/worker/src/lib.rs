@@ -4,6 +4,7 @@
 //! the binary beside it.
 
 pub mod actions;
+pub mod artifacts;
 pub mod build;
 pub mod checkout;
 pub mod ci;

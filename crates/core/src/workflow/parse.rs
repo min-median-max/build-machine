@@ -395,7 +395,7 @@ impl Step {
             }
         }
         for (key, value) in step.with.iter_mut() {
-            if reads_input(self.adapter, key) {
+            if reads_input(self.adapter, key) && !names_secret(value) {
                 *value = render(value).with_context(|| format!("with {key}"))?;
             }
         }
@@ -479,7 +479,7 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
             }
         }
         for (key, value) in &with {
-            if reads_input(adapter, key) {
+            if reads_input(adapter, key) && !names_secret(value) {
                 check_template(value, &defined, &format!("{owner}의 with {key}"), &mut reads)?;
             }
         }

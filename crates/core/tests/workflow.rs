@@ -732,3 +732,18 @@ fn a_release_input_it_does_not_honour_fails_validation() {
     let error = workflow::load(&path, "push", None).unwrap_err();
     assert!(format!("{error:#}").contains("'draft'"), "{error:#}");
 }
+
+/// download-artifact reads `name`, `path` and `run-id`, and accepts the token
+/// of `github-token` without a value; an input that would download something
+/// else fails validation.
+#[test]
+fn artifact_inputs_are_read_or_refused() {
+    let download = |with: &str| {
+        load(&format!(
+            "# build-machine: skip build reason=fixture\n# build-machine: skip test reason=fixture\n# build-machine: skip smoke reason=fixture\nname: merge\non: workflow_dispatch\njobs:\n  merge:\n    runs-on: ubuntu-26.04-arm\n    steps:\n      - uses: actions/download-artifact@v4\n        with:\n          name: validation\n{with}"
+        ))
+    };
+    download("          run-id: 20261004-120000-000000\n          github-token: ${{ github.token }}\n").unwrap();
+    let error = download("          pattern: valid*\n").unwrap_err();
+    assert!(format!("{error:#}").contains("pattern"), "{error:#}");
+}

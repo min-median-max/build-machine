@@ -116,9 +116,14 @@ PowerShell은 모든 줄을 실행하고 마지막 종료 코드만 보고하므
 `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`,
 `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
 `tauri-apps/tauri-action`, `actions/upload-artifact`,
-`actions/upload-pages-artifact`, `actions/deploy-pages`,
-`softprops/action-gh-release`. action의 owner와 이름은 GitHub처럼 대소문자를 구분하지
-않습니다. setup action의 `with` 입력 중 어댑터가 반영하지 않는 것은 검증에서 실패하며,
+`actions/download-artifact`, `actions/upload-pages-artifact`,
+`actions/deploy-pages`, `softprops/action-gh-release`. action의 owner와 이름은 GitHub처럼
+대소문자를 구분하지 않습니다. upload-artifact는 `path`의 파일(한 줄에 상대 경로 하나, 가장 가까운
+공통 상위 폴더 아래 배치)을 이 Mac의 run의 artifact `name`으로 보관하며, 아무것도 맞지 않는
+경로는 action의 기본 경고처럼 파일을 더하지 않습니다. download-artifact는 run이나 `run-id`가
+가리키는 이전 재현의 artifact `name`을 `path`에 둡니다. GitHub에는 아무것도 보내지 않고 각각
+제한으로 기록합니다. upload의 `name`, `path`, `retention-days`, download의 `name`, `path`,
+`run-id`, `github-token` 외의 입력은 검증에서 실패하고, `name` 없는 download는 실패합니다. setup action의 `with` 입력 중 어댑터가 반영하지 않는 것은 검증에서 실패하며,
 pages action도 업로드의 `path`, `name`, `retention-days`와 배포의 `artifact_name` 외의
 입력은 실패합니다. 업로드는 단계가 실행될 때의 사이트를 재현이 끝날 때까지 보관합니다.
 deploy-pages는 아무것도 배포하지 않고 그 산출물의 파일을 크기, SHA-256과 함께 결과의

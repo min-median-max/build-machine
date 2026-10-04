@@ -74,6 +74,10 @@ pub struct WorkRequest {
     pub skips: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_signature: Option<String>,
+    /// The controller's id of this run, under which a workflow replay keeps
+    /// its artifacts for `download-artifact` with `run-id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 impl WorkRequest {
