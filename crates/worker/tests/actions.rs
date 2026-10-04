@@ -6,8 +6,8 @@
 
 use build_machine_core::workflow::{Adapter, Step};
 use build_machine_worker::actions::{
-    declared_version, go_mod_version, listed_checksum, php_extensions, php_packages, php_plan, php_version,
-    resolve_go, resolve_node, version_spec, GoArchive,
+    declared_version, go_mod_version, listed_checksum, php_build, php_build_name, php_extensions, php_plan,
+    php_version, resolve_go, resolve_node, version_spec, GoArchive,
 };
 
 fn step(adapter: Adapter, with: &[(&str, &str)]) -> Step {
@@ -103,12 +103,8 @@ fn a_checksum_comes_from_the_publishers_listing() {
 }
 
 #[test]
-fn php_extensions_map_to_their_debian_packages() {
-    let extensions = php_extensions(Some(&"pdo_mysql, pdo_pgsql, pdo_sqlite, openssl, mbstring, mysqli".to_owned())).unwrap();
-    assert_eq!(
-        php_packages("8.5", &extensions),
-        ["php8.5-cli", "php8.5-mysql", "php8.5-pgsql", "php8.5-sqlite3", "php8.5-mbstring"]
-    );
+fn php_versions_and_extensions_are_read_as_setup_php_reads_them() {
+    assert_eq!(php_extensions(Some(&"pdo_mysql, PDO_PGSQL , openssl".to_owned())).unwrap(), ["pdo_mysql", "pdo_pgsql", "openssl"]);
     assert_eq!(php_version("8.5").unwrap(), "8.5");
     for unsupported in ["8", "8.5.1", "latest"] {
         assert!(php_version(unsupported).is_err(), "{unsupported}");
@@ -119,14 +115,41 @@ fn php_extensions_map_to_their_debian_packages() {
     }
 }
 
+/// On a hosted Ubuntu runner setup-php installs a PHP release the image does
+/// not carry from its cached builds, shivammathur/php-ubuntu, one archive per
+/// release, Ubuntu version and architecture. The distribution's archive has
+/// one PHP release per Ubuntu version: Ubuntu 26.04 carries 8.5, not the 8.4
+/// orm's lowest-release check asks for.
+#[test]
+fn php_comes_from_setup_php_s_build_for_this_ubuntu_and_architecture() {
+    assert_eq!(php_build_name("8.4", "26.04", "aarch64").unwrap(), "php_8.4-nts+ubuntu26.04_arm64.tar.zst");
+    assert_eq!(php_build_name("8.5", "24.04", "x86_64").unwrap(), "php_8.5-nts+ubuntu24.04.tar.zst");
+    assert!(php_build_name("8.5", "26.04", "riscv64").is_err());
+
+    let release = serde_json::json!({
+        "tag_name": "builds",
+        "assets": [
+            { "name": "php_8.4-nts+ubuntu26.04_arm64.tar.zst", "digest": "sha256:6c27", "browser_download_url": "https://github.com/shivammathur/php-ubuntu/releases/download/builds/php_8.4-nts%2Bubuntu26.04_arm64.tar.zst" },
+            { "name": "php_8.3-nts+ubuntu26.04_arm64.tar.zst", "browser_download_url": "https://example.invalid/unsigned" }
+        ]
+    });
+    let build = php_build(&release, "php_8.4-nts+ubuntu26.04_arm64.tar.zst").unwrap();
+    assert_eq!(build.sha256, "6c27");
+    assert!(build.url.ends_with("php_8.4-nts%2Bubuntu26.04_arm64.tar.zst"));
+    // No build is an explicit failure naming what is missing, never another release.
+    let missing = format!("{:#}", php_build(&release, "php_7.4-nts+ubuntu26.04_arm64.tar.zst").unwrap_err());
+    assert!(missing.contains("php_7.4-nts+ubuntu26.04_arm64.tar.zst"), "{missing}");
+    // A build without a published checksum is not installed.
+    assert!(php_build(&release, "php_8.3-nts+ubuntu26.04_arm64.tar.zst").is_err());
+}
+
 #[test]
 fn the_php_plan_reads_the_version_file_and_refuses_what_it_does_not_install() {
     let read = files(&[(".php-version", "8.5\n")]);
     let orm = step(Adapter::PhpSetup, &[("php-version-file", ".php-version"), ("extensions", "pdo_mysql, pdo_pgsql, pdo_sqlite, openssl")]);
-    let (version, extensions, packages) = php_plan(&orm, &read).unwrap();
+    let (version, extensions) = php_plan(&orm, &read).unwrap();
     assert_eq!(version, "8.5");
     assert_eq!(extensions, ["pdo_mysql", "pdo_pgsql", "pdo_sqlite", "openssl"]);
-    assert_eq!(packages, ["php8.5-cli", "php8.5-mysql", "php8.5-pgsql", "php8.5-sqlite3"]);
     assert!(php_plan(&step(Adapter::PhpSetup, &[]), &read).is_err(), "a version is required");
     let tools = step(Adapter::PhpSetup, &[("php-version", "8.5"), ("tools", "phpunit")]);
     assert!(php_plan(&tools, &read).is_err());

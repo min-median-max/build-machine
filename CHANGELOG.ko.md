@@ -4,7 +4,7 @@
 
 workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 push하기 전에 여기서 확인할 수 있습니다.
 
-- `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`가 단계에 직접 또는 버전 파일로 선언한 릴리스를 설치하고 이후 단계의 PATH 앞에 둡니다. Node.js·Go 아카이브와 Composer는 nodejs.org, go.dev, getcomposer.org가 공개한 체크섬과 대조하고, 릴리스마다 자기 디렉터리를 두므로 두 번째 재현은 아무것도 설치하지 않습니다. PHP와 선언한 확장은 새 권한 단계 `ci-system`에서 배포판 apt 저장소로 설치하며, 그 릴리스를 PATH의 `php`로 정합니다. 이전에는 `setup-node`가 workflow의 선언과 상관없이 `machine.json`의 Node.js로 대신했습니다.
+- `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`가 단계에 직접 또는 버전 파일로 선언한 릴리스를 설치하고 이후 단계의 PATH 앞에 둡니다. Node.js·Go 아카이브와 Composer는 nodejs.org, go.dev, getcomposer.org가 공개한 체크섬과 대조하고, 릴리스마다 자기 디렉터리를 두므로 두 번째 재현은 아무것도 설치하지 않습니다. PHP는 아래에 적은 대로 hosted runner의 setup-php처럼 설치하며, 그 릴리스를 PATH의 `php`로 정합니다. 이전에는 `setup-node`가 workflow의 선언과 상관없이 `machine.json`의 Node.js로 대신했습니다.
 - action 이름을 GitHub처럼 대소문자 구분 없이 맞춥니다. `Swatinem/rust-cache`가 검증에서 실패했습니다.
 - 단계를 workflow 순서대로 실행합니다. 이전에는 스테이지별로 실행해서, `setup`으로 분류된 단계가 자신이 읽는 출력을 만드는 앞의 `test` 단계보다 먼저 실행됐습니다. 스테이지는 이제 보고 방식일 뿐입니다.
 - 단계가 실패해도 runner처럼 계속합니다. 실패 뒤에는 `if:`가 허용하는 단계만 실행하고, 실행하지 않은 단계는 이유와 함께 `skipped`로 기록합니다. 이전에는 첫 실패에서 멈췄고 `if:`는 리터럴 값만 받았습니다. 이제 `success()`, `failure()`, `always()`, `cancelled()`, `!`, `&&`, `||`, `${{ }}`를 읽고, 그 밖의 context는 실행 중이 아니라 검증에서 실패합니다.
@@ -20,6 +20,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - 단계 출력이 GitHub처럼 동작합니다. `id`가 있는 `run` 단계가 `$GITHUB_OUTPUT`에 쓰고, 같은 job의 이후 단계가 `if:`, `run:`, `env`, `working-directory`, 어댑터가 읽는 `with` 입력에서 `${{ steps.<id>.outputs.<name> }}`을 읽습니다. `==`, `!=`, 문자열·숫자 리터럴과 GitHub의 `&&`·`||` 값 규칙도 읽습니다. 검증은 참조를 확인하고, 값은 단계를 실행할 때 채웁니다. orm의 `setup-php` 단계는 검증이 받아들일 수 없던 `php-min` 단계의 출력에서 버전을 받습니다. 로컬 값이 없는 `env` 표현식은 실행 중에 빈 값으로 바뀌었는데, 이제 `run:`이나 `working-directory`의 표현식처럼 검증에서 실패합니다.
 - `actions/checkout`이 runner처럼 Git 저장소를 만듭니다. 스냅샷에 `.git`이 없어서 `git log`, `git ls-files`, `git grep`을 읽는 orm 검사가 실패했습니다. 이제 컨트롤러가 저장소의 branch, tag, `HEAD`를 Git bundle로 archive 옆에 보내고, checkout은 로컬 mirror를 거쳐 `actions/checkout`의 명령으로 가져옵니다. 기본은 commit 하나, `fetch-depth: 0`은 모든 branch와 tag이며, 재현하는 branch나 tag를 checkout합니다. 작업 트리를 재현하면 커밋하지 않은 수정·삭제·추적하지 않는 파일을 재현하는 commit 위에 stage합니다. 이 두 가지와 기록이 GitHub remote가 아니라 로컬 저장소의 것이라는 점은 제한으로 기록합니다. 다른 것을 checkout하게 하는 입력(`ref`, `path`, `submodules` 등)은 무시되지 않고 검증에서 실패합니다.
 - 모든 job은 `<work>/<저장소>/<저장소>`의 빈 `GITHUB_WORKSPACE`에서 시작합니다. 이전에는 같은 소스의 이전 재현이 풀어 둔 소스를 그 재현이 남긴 것과 함께 다시 썼고, checkout 전 단계도 runner에는 아직 없는 파일을 봤습니다. `GITHUB_SHA`, `GITHUB_REF`, `GITHUB_REF_NAME`, `GITHUB_REF_TYPE`, `GITHUB_EVENT_NAME`, `GITHUB_JOB`을 설정합니다. Linux에서는 job이 끝나면 runner처럼 그 job의 `RUNNER_TRACKING_ID`를 가진 프로세스를 종료하고, 다른 플랫폼에서는 제한으로 기록합니다. 머신 자체가 새 이미지가 아니라는 점은 모든 재현의 제한으로 기록합니다.
+- `shivammathur/setup-php`가 hosted Ubuntu runner에서 setup-php가 가져오는 곳에서 PHP를 가져옵니다. 머신에 이미 있는 릴리스는 그것으로 전환하고, 그 밖의 릴리스는 머신의 Ubuntu 버전과 아키텍처용 setup-php 캐시 빌드(shivammathur/php-ubuntu)를 GitHub가 그 asset에 공개한 sha256과 대조한 뒤 setup-php 설치 스크립트처럼 설치합니다. 이전에는 Ubuntu 버전마다 PHP 릴리스가 하나뿐인 배포판 apt 저장소에서 설치해서, Ubuntu 26.04에서는 8.5만 있어 orm의 최저 릴리스 검사가 8.4를 얻을 수 없었습니다. 머신용 빌드가 없는 릴리스나 빌드에 없는 선언 확장은 그 이유와 함께 단계를 실패시킵니다. 버전이 앞 단계의 출력에서 올 수 있으므로 어댑터는 이제 runner처럼 단계가 실행될 때 비밀번호 없는 `sudo`로 실행하며, 재현 전에 PHP를 설치하던 권한 단계 `ci-system`은 제거했습니다.
 
 ## 0.1.0
 

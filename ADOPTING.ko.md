@@ -44,8 +44,11 @@ workflow 재현은 다릅니다. `actions/setup-node`, `actions/setup-go`,
 `shivammathur/setup-php`는 그 단계가 선언한 릴리스 — `node-version`, `go-version`,
 `php-version` 또는 대응하는 `*-version-file` — 를 설치하고 이후 단계의 PATH 앞에
 둡니다. 아카이브는 배포처(nodejs.org, go.dev, getcomposer.org)가 공개한 체크섬과
-대조합니다. PHP는 배포판의 apt 저장소에서 설치하므로, 배포판에 없는 릴리스는 그 단계를
-실패시킵니다. 재현은 Rust도 고정하지 않습니다. runner에서처럼 workflow의
+대조합니다. PHP는 hosted Ubuntu runner에서 setup-php가 가져오는 곳에서 가져옵니다. 머신에 이미
+있는 릴리스는 그것으로 전환하고, 그 밖의 릴리스는 이 Ubuntu 버전과 아키텍처용
+setup-php 캐시 빌드(shivammathur/php-ubuntu)를 GitHub가 공개한 sha256과 대조한 뒤
+runner처럼 비밀번호 없는 `sudo`로 설치합니다. 그런 빌드가 없는 릴리스나 빌드에 없는
+선언 확장은 이유와 함께 그 단계를 실패시키고, 다른 것으로 대신하지 않습니다. 재현은 Rust도 고정하지 않습니다. runner에서처럼 workflow의
 `rust-toolchain.toml`이나 rustup 호출이 고릅니다.
 
 선언된 Node.js·pnpm·Rust·Go에서 프로젝트가 동작하게 하거나, `machine.json`을 바꾸고

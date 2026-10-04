@@ -18,7 +18,7 @@ use crate::stream;
 use anyhow::{bail, Context, Result};
 use build_machine_core::workflow::Step;
 use build_machine_core::Platform;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// What a setup adapter did, for the step's report.
 pub struct Installed {
@@ -164,13 +164,6 @@ pub fn php_version(text: &str) -> Result<String> {
     }
 }
 
-/// Extensions every Debian PHP build carries in `php<v>-cli` or `php<v>-common`.
-const PHP_BUNDLED: [&str; 27] = [
-    "calendar", "core", "ctype", "date", "exif", "ffi", "fileinfo", "filter", "ftp", "gettext", "hash", "iconv",
-    "json", "libxml", "openssl", "pcntl", "pcre", "pdo", "phar", "posix", "random", "readline", "reflection",
-    "sockets", "sodium", "spl", "tokenizer",
-];
-
 /// The declared extensions, normalised. Disabling one (`:name`) or all
 /// (`none`) changes the image rather than adding to it, which this adapter
 /// does not do.
@@ -187,27 +180,6 @@ pub fn php_extensions(list: Option<&String>) -> Result<Vec<String>> {
         extensions.push(name);
     }
     Ok(extensions)
-}
-
-/// The Debian packages that provide a PHP version and its extensions.
-pub fn php_packages(version: &str, extensions: &[String]) -> Vec<String> {
-    let mut packages = vec![format!("php{version}-cli")];
-    for extension in extensions {
-        if PHP_BUNDLED.contains(&extension.as_str()) {
-            continue;
-        }
-        let package = match extension.as_str() {
-            "pdo_mysql" | "mysqli" | "mysqlnd" => "mysql",
-            "pdo_pgsql" | "pgsql" => "pgsql",
-            "pdo_sqlite" | "sqlite3" => "sqlite3",
-            other => other,
-        };
-        let package = format!("php{version}-{package}");
-        if !packages.contains(&package) {
-            packages.push(package);
-        }
-    }
-    packages
 }
 
 fn read_in(workspace: &Path) -> impl Fn(&str) -> Result<String> + '_ {
@@ -361,10 +333,8 @@ pub fn setup_go(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runne
     Ok(Installed { summary, limits })
 }
 
-/// The PHP version and packages of a `setup-php` step, read from the source
-/// archive. The system phase runs before the source is extracted, as root, and
-/// must not leave root-owned files in the user's workspace.
-pub fn php_plan(step: &Step, read: &dyn Fn(&str) -> Result<String>) -> Result<(String, Vec<String>, Vec<String>)> {
+/// The PHP version and extensions of a `setup-php` step.
+pub fn php_plan(step: &Step, read: &dyn Fn(&str) -> Result<String>) -> Result<(String, Vec<String>)> {
     if let Some(tools) = step.with.get("tools") {
         if tools.trim() != "composer" {
             bail!("setup-php tools '{tools}'는 아직 지원하지 않아요. composer만 설치해요.");
@@ -379,55 +349,122 @@ pub fn php_plan(step: &Step, read: &dyn Fn(&str) -> Result<String>) -> Result<(S
         .context("setup-php에는 php-version 또는 php-version-file이 필요해요.")?;
     let version = php_version(&version)?;
     let extensions = php_extensions(step.with.get("extensions"))?;
-    let packages = php_packages(&version, &extensions);
-    Ok((version, extensions, packages))
+    Ok((version, extensions))
 }
 
-/// Install a `setup-php` step's packages. Runs as root, before the replay.
+/// The archive of setup-php's cached build of a PHP release, as its
+/// `php-ubuntu` install script names it.
+pub fn php_build_name(version: &str, ubuntu: &str, arch: &str) -> Result<String> {
+    let suffix = match arch {
+        "aarch64" | "arm64" => "_arm64",
+        "x86_64" => "",
+        other => bail!("setup-php에는 {other}용 PHP 빌드가 없어요."),
+    };
+    Ok(format!("php_{version}-nts+ubuntu{ubuntu}{suffix}.tar.zst"))
+}
+
+/// A cached build and the checksum GitHub publishes for it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PhpBuild {
+    pub url: String,
+    pub sha256: String,
+}
+
+/// Find a build in the shivammathur/php-ubuntu release setup-php downloads
+/// from. A build that is not there is the explicit failure a runner of this
+/// image would hit too; it is never replaced by another release.
+pub fn php_build(release: &serde_json::Value, name: &str) -> Result<PhpBuild> {
+    let tag = release["tag_name"].as_str().unwrap_or_default();
+    let asset = release["assets"]
+        .as_array()
+        .and_then(|assets| assets.iter().find(|asset| asset["name"].as_str() == Some(name)))
+        .with_context(|| {
+            format!("setup-php의 PHP 빌드 저장소(shivammathur/php-ubuntu {tag})에 {name}이 없어요. 이 Ubuntu 버전과 아키텍처에는 이 PHP 릴리스를 설치할 수 없어요.")
+        })?;
+    let sha256 = asset["digest"]
+        .as_str()
+        .and_then(|digest| digest.strip_prefix("sha256:"))
+        .with_context(|| format!("{name}에 GitHub가 공개한 sha256 체크섬이 없어요."))?;
+    let url = asset["browser_download_url"].as_str().context("PHP 빌드의 내려받기 주소가 없어요.")?;
+    Ok(PhpBuild { url: url.to_owned(), sha256: sha256.to_owned() })
+}
+
+/// What setup-php's php-ubuntu install script does with a build, as root:
+/// unpack it over `/`, merge its packages into dpkg's status, and register
+/// its programs as alternatives. `$1` is the archive and `$2` the release.
 #[cfg(target_os = "linux")]
-pub fn setup_php_system(step: &Step, read: &dyn Fn(&str) -> Result<String>, tools: &Tools) -> Result<()> {
-    let (version, _, packages) = php_plan(step, read)?;
-    let missing: Vec<String> = packages
-        .iter()
-        .filter(|package| {
-            let arguments = vec!["-W".to_owned(), "-f=${Status}".to_owned(), (*package).clone()];
-            !matches!(stream::capture("dpkg-query", &arguments, &tools.environment), Ok(status) if status.trim() == "install ok installed")
-        })
-        .cloned()
-        .collect();
-    let mut environment = tools.environment.clone();
-    environment.push(("DEBIAN_FRONTEND".to_owned(), "noninteractive".to_owned()));
-    if missing.is_empty() {
-        println!("OK: PHP {version} packages present: {}. No installation.", packages.join(" "));
-    } else {
-        stream::checked("apt-get", &["update".to_owned()], None, &environment)?;
-        let mut arguments = vec!["install".to_owned(), "-y".to_owned()];
-        arguments.extend(missing);
-        stream::checked("apt-get", &arguments, None, &environment)?;
-    }
-    // setup-php makes the version it installed the `php` on PATH.
-    let program = format!("/usr/bin/php{version}");
-    let current = stream::capture(
-        "update-alternatives",
-        &["--query".to_owned(), "php".to_owned()],
-        &environment,
-    )?;
-    let selected = current.lines().find_map(|line| line.strip_prefix("Value: ")).map(str::trim);
-    if selected == Some(program.as_str()) {
-        println!("OK: php selects {program}. No change.");
-    } else {
-        stream::checked("update-alternatives", &["--set".to_owned(), "php".to_owned(), program], None, &environment)?;
-    }
+const PHP_BUILD_INSTALL: &str = r#"set -e
+tar_file=$1
+version=$2
+cp /var/lib/dpkg/status /var/lib/dpkg/status-orig
+rm -rf /var/lib/apt/lists/*ondrej*
+tar -I zstd -xf "$tar_file" -C /
+LC_ALL=C.UTF-8 python3 /usr/sbin/merge_status && rm -f /usr/sbin/merge_status
+mv /var/lib/dpkg/status-orig /var/lib/dpkg/status
+update-alternatives --force --install /usr/lib/cgi-bin/php php-cgi-bin /usr/lib/cgi-bin/php"$version" "${version/./}"
+update-alternatives --force --install /usr/sbin/php-fpm php-fpm /usr/sbin/php-fpm"$version" "${version/./}"
+update-alternatives --force --install /run/php/php-fpm.sock php-fpm.sock /run/php/php"$version"-fpm.sock "${version/./}"
+for tool in phpize php-config phpdbg php-cgi php phar.phar phar; do
+  update-alternatives --force --install /usr/bin/"$tool" "$tool" /usr/bin/"$tool$version" "${version/./}" \
+    --slave /usr/share/man/man1/"$tool".1.gz "$tool".1.gz /usr/share/man/man1/"$tool$version".1.gz
+done
+systemctl daemon-reload 2>/dev/null || true
+systemctl start php"$version"-fpm 2>/dev/null || true
+if ! apt-get check 2>/dev/null; then
+  apt --fix-broken install -y || (apt-get update && apt --fix-broken install -y)
+fi
+"#;
+
+/// Run a command as root through `sudo`, which a runner's account may use
+/// without a password; a password prompt fails the step instead of waiting.
+#[cfg(target_os = "linux")]
+fn as_root(program: &str, arguments: &[&str], environment: &[(String, String)]) -> Result<()> {
+    let mut all = vec!["-n".to_owned(), "env".to_owned(), "DEBIAN_FRONTEND=noninteractive".to_owned(), program.to_owned()];
+    all.extend(arguments.iter().map(|value| (*value).to_owned()));
+    stream::checked("sudo", &all, None, environment)
+        .with_context(|| "setup-php는 runner처럼 비밀번호 없는 sudo가 필요해요.".to_owned())?;
     Ok(())
 }
 
-/// `shivammathur/setup-php`, as the replaying user: confirm what the system
-/// phase installed, and install Composer.
+/// `shivammathur/setup-php` on Ubuntu, as it runs on a hosted runner: a PHP
+/// release the machine already has (`/usr/bin/php<v>` and `php-config<v>`) is
+/// switched to; any other is installed from setup-php's cached build for this
+/// Ubuntu version and architecture. The release then becomes `php` and its
+/// tools on PATH, and Composer is installed.
+#[cfg(target_os = "linux")]
 pub fn setup_php(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runner) -> Result<Installed> {
-    if tools.platform != Platform::Linux {
-        bail!("setup-php 어댑터는 아직 Linux 작업자에서만 설치해요.");
+    let (version, extensions) = php_plan(step, &read_in(workspace))?;
+    let environment = runner_environment(tools, runner)?;
+    let present = Path::new(&format!("/usr/bin/php{version}")).exists()
+        && Path::new(&format!("/usr/bin/php-config{version}")).exists();
+    let source = if present {
+        format!("PHP {version} already on this machine")
+    } else {
+        let release_text = std::fs::read_to_string("/etc/os-release").context("/etc/os-release를 읽지 못했어요.")?;
+        let ubuntu = release_text
+            .lines()
+            .find_map(|line| line.strip_prefix("VERSION_ID="))
+            .map(|value| value.trim_matches('"').to_owned())
+            .context("/etc/os-release에 VERSION_ID가 없어요.")?;
+        let name = php_build_name(&version, &ubuntu, std::env::consts::ARCH)?;
+        let release = fetch_json(
+            tools,
+            "https://api.github.com/repos/shivammathur/php-ubuntu/releases/latest",
+            "php-ubuntu-release.json",
+        )?;
+        let build = php_build(&release, &name)?;
+        let archive = tools.download(&build.url, &build.sha256, &name)?;
+        let archive_text = archive.to_string_lossy().into_owned();
+        as_root("bash", &["-c", PHP_BUILD_INSTALL, "php-build-install", &archive_text, &version], &environment)?;
+        format!("{name} of shivammathur/php-ubuntu {}, sha256 {}", release["tag_name"].as_str().unwrap_or_default(), build.sha256)
+    };
+    // setup-php's switch_version: the release's programs become the defaults.
+    for tool in ["php", "phar", "phar.phar", "php-cgi", "php-config", "phpize", "phpdbg"] {
+        let program = format!("/usr/bin/{tool}{version}");
+        if Path::new(&program).exists() {
+            as_root("update-alternatives", &["--set", tool, &program], &environment)?;
+        }
     }
-    let (version, extensions, packages) = php_plan(step, &read_in(workspace))?;
     check_reports(
         tools,
         runner,
@@ -440,26 +477,27 @@ pub fn setup_php(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runn
     let absent: Vec<&String> = extensions.iter().filter(|extension| !loaded.contains(&extension.as_str())).collect();
     if !absent.is_empty() {
         bail!(
-            "PHP {version}에 선언한 확장이 없어요: {}",
+            "PHP {version}에 선언한 확장이 없어요: {}. setup-php는 이것을 ondrej/php 저장소나 PECL에서 설치하는데, 이 어댑터는 그렇게 하지 않아요.",
             absent.iter().map(|value| value.as_str()).collect::<Vec<_>>().join(", ")
         );
     }
     let composer = install_composer(tools)?;
     runner.add_path(composer.0.clone());
     Ok(Installed {
-        summary: format!(
-            "PHP {version} from {} with extensions {}; Composer {}.",
-            packages.join(" "),
-            extensions.join(", "),
-            composer.1
-        ),
+        summary: format!("PHP {version} from {source}, extensions {}; Composer {}.", extensions.join(", "), composer.1),
         limits: Vec::new(),
     })
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn setup_php(_step: &Step, _workspace: &Path, _tools: &Tools, _runner: &mut Runner) -> Result<Installed> {
+    bail!("setup-php 어댑터는 아직 Linux 작업자에서만 설치해요.")
+}
+
+#[cfg(target_os = "linux")]
 /// The latest stable Composer, as `setup-php` installs it, verified against
 /// the checksum getcomposer.org publishes for that release.
-fn install_composer(tools: &Tools) -> Result<(PathBuf, String)> {
+fn install_composer(tools: &Tools) -> Result<(std::path::PathBuf, String)> {
     let versions = fetch_json(tools, "https://getcomposer.org/versions", "composer-versions.json")?;
     let version = versions["stable"][0]["version"].as_str().context("Composer 안정 릴리스를 찾지 못했어요.")?.to_owned();
     let directory = tools.root.join(format!("composer-{version}"));
@@ -488,11 +526,16 @@ fn install_composer(tools: &Tools) -> Result<(PathBuf, String)> {
     Ok((directory, format!("{version}, composer.phar sha256 {sha256}")))
 }
 
+/// The environment the steps after this one run under.
+fn runner_environment(tools: &Tools, runner: &Runner) -> Result<Vec<(String, String)>> {
+    let files = runner.begin_step(0)?;
+    Ok(runner.environment(&tools.environment, &files))
+}
+
 fn capture_in(tools: &Tools, runner: &Runner, program: &str, arguments: &[&str]) -> Result<String> {
     // The step's own PATH decides which program runs, as it will for the
     // steps after this one.
-    let files = runner.begin_step(0)?;
-    let environment = runner.environment(&tools.environment, &files);
+    let environment = runner_environment(tools, runner)?;
     let arguments: Vec<String> = arguments.iter().map(|value| (*value).to_owned()).collect();
     stream::capture(program, &arguments, &environment)
 }

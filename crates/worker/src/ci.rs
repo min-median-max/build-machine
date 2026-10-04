@@ -162,42 +162,6 @@ pub fn ordered_steps(request: &WorkRequest) -> Vec<(&'static str, &Step)> {
     request.jobs.iter().flat_map(|job| job.steps.iter().map(|step| (stage_of(step), step))).collect()
 }
 
-/// Read one file of the source archive without extracting it.
-#[cfg(target_os = "linux")]
-fn archive_reader(archive: &Path) -> impl Fn(&str) -> Result<String> + '_ {
-    move |relative: &str| {
-        let file = std::fs::File::open(archive)?;
-        let mut zip = zip::ZipArchive::new(file)?;
-        let relative = relative.trim_start_matches("./");
-        let mut entry = zip.by_name(relative).with_context(|| format!("소스에 {relative}가 없어요."))?;
-        let mut text = String::new();
-        std::io::Read::read_to_string(&mut entry, &mut text)?;
-        Ok(text)
-    }
-}
-
-/// What a replay needs installed system-wide, before it runs as the desktop
-/// user: the machine's own prerequisites and the packages a `setup-php` step
-/// declares. Runs elevated.
-pub fn prepare_system(request: &WorkRequest, tools: &Tools) -> Result<()> {
-    tools.setup_system()?;
-    let archive = Path::new(&request.archive);
-    if build_machine_core::source::sha256_file(archive)? != request.snapshot.source_hash {
-        bail!("Source snapshot checksum mismatch.");
-    }
-    for (_, step) in ordered_steps(request) {
-        if step.adapter != Adapter::PhpSetup {
-            continue;
-        }
-        #[cfg(target_os = "linux")]
-        crate::actions::setup_php_system(step, &archive_reader(archive), tools)
-            .with_context(|| format!("step {} ({})", step.index, step.name))?;
-        #[cfg(not(target_os = "linux"))]
-        bail!("setup-php 어댑터는 아직 Linux 작업자에서만 설치해요: step {} ({})", step.index, step.name);
-    }
-    Ok(())
-}
-
 /// A step's own result, before it is placed in its stage.
 struct Ran {
     status: Outcome,

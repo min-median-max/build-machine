@@ -172,19 +172,10 @@ fn execute_platform(
         None => None,
     };
     if platform != Platform::Macos {
-        match (operation.action, request.as_deref()) {
-            // A replay also installs what its setup actions declare system-wide,
-            // which the request names.
-            (Action::Ci, Some(request)) => {
-                transport.invoke_elevated(
-                    &["ci-system".to_owned(), "--request".to_owned(), request.to_owned()],
-                    log,
-                )?;
-            }
-            (Action::Setup | Action::Build | Action::Release | Action::Ci, _) => {
-                transport.invoke_elevated(&["setup-system".to_owned()], log)?;
-            }
-            _ => {}
+        // A replay's setup actions install what they declare when their step
+        // runs, through sudo, as they do on a runner.
+        if matches!(operation.action, Action::Setup | Action::Build | Action::Release | Action::Ci) {
+            transport.invoke_elevated(&["setup-system".to_owned()], log)?;
         }
     }
     let arguments = worker_arguments(operation, request.as_deref());

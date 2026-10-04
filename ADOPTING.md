@@ -49,8 +49,12 @@ A workflow replay is different: `actions/setup-node`, `actions/setup-go` and
 `node-version`, `go-version`, `php-version` or the matching `*-version-file` —
 and put it first on PATH for the steps after them. The archive is checked
 against the checksum its publisher lists (nodejs.org, go.dev, getcomposer.org);
-PHP comes from the distribution's apt archive, so a release the distribution
-does not carry fails the step. A replay does not pin Rust either: the workflow's
+PHP comes from where setup-php takes it on a hosted Ubuntu runner: a release the
+machine already has is switched to, any other is setup-php's cached build for
+this Ubuntu version and architecture (shivammathur/php-ubuntu), checked against
+the sha256 GitHub publishes for it and installed through passwordless `sudo`, as
+on a runner. A release with no such build, or a declared extension the build
+does not carry, fails the step with the reason; nothing else stands in. A replay does not pin Rust either: the workflow's
 `rust-toolchain.toml` or rustup call selects it, as on a runner.
 
 Make your project work with the declared Node.js, pnpm, Rust and Go, or change
