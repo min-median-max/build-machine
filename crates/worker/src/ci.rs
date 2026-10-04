@@ -637,6 +637,28 @@ pub fn finish_job(work: &Path, keep: &Path, artifacts: &mut [Artifact]) -> Resul
     Ok(())
 }
 
+/// Where a job runs, laid out as a runner lays it out under its home:
+/// `work/<repo>/<repo>` is `GITHUB_WORKSPACE`, `work/<repo>` is
+/// `RUNNER_WORKSPACE` and `work/_temp` holds the runner's files. A path under
+/// the checkout is then as long as on GitHub, which a unix socket's 107-byte
+/// limit depends on. One job uses it at a time: every front end holds the
+/// machine lock for its whole operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunnerWork {
+    pub runner_workspace: std::path::PathBuf,
+    pub workspace: std::path::PathBuf,
+    pub temp: std::path::PathBuf,
+}
+
+pub fn runner_work(home: &Path, repository: &str) -> RunnerWork {
+    let work = home.join("work");
+    RunnerWork {
+        runner_workspace: work.join(repository),
+        workspace: work.join(repository).join(repository),
+        temp: work.join("_temp"),
+    }
+}
+
 pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     tools.setup_system()?;
     tools.setup_user()?;
@@ -646,13 +668,14 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     if build_machine_core::source::sha256_file(Path::new(&request.archive))? != request.snapshot.source_hash {
         bail!("Source snapshot checksum mismatch.");
     }
-    // GITHUB_WORKSPACE is <work>/<repository>/<repository>, as on a runner.
+    // The job runs in the runner's layout under the home directory; the run
+    // records and artifacts stay in `directory`.
     let repository = Path::new(&request.snapshot.project)
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .context("프로젝트 이름이 없어요.")?;
-    let work = directory.join("work");
-    let workspace = work.join(&repository).join(&repository);
+    let layout = runner_work(&crate::provision::home_directory()?, &repository);
+    let workspace = layout.workspace.clone();
     let base = replay_environment(tools)?;
     // The byte cap of machine.json retention holds before a replay adds to the
     // machine, not only after one succeeds.
@@ -720,16 +743,19 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             ));
         }
         // Every job starts in an empty workspace; actions/checkout fills it.
-        if workspace.exists() {
-            std::fs::remove_dir_all(&workspace)
-                .with_context(|| format!("이전 workspace를 지우지 못했어요: {}", workspace.display()))?;
+        for stale in [&layout.runner_workspace, &layout.temp] {
+            if stale.exists() {
+                std::fs::remove_dir_all(stale)
+                    .with_context(|| format!("이전 workspace를 지우지 못했어요: {}", stale.display()))?;
+            }
         }
         std::fs::create_dir_all(&workspace)?;
-        let mut runner = Runner::new(&directory.join("runner").join(&job.id), &workspace, tools.platform)?;
+        let mut runner = Runner::new(&layout.temp, &workspace, tools.platform)?;
         let tracking = format!("build-machine-{}-{}-{}", std::process::id(), job.id, build_machine_core::now());
         for (key, value) in runner_context(request, job, &tracking) {
             runner.set(key, &value);
         }
+        runner.set("RUNNER_WORKSPACE", &layout.runner_workspace.to_string_lossy());
         let status =
             run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure, &github, &pages)?;
         finished.insert(job.id.as_str(), status);
@@ -738,10 +764,9 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             println!("Terminate orphan process: pid {process}");
         }
         // The job's workspace and runner files go with the job; its artifacts stay.
-        finish_job(&work, &directory.join("artifacts").join(&job.id), &mut result.artifacts)?;
-        let runner_files = directory.join("runner").join(&job.id);
-        if runner_files.exists() {
-            std::fs::remove_dir_all(&runner_files)?;
+        finish_job(&layout.runner_workspace, &directory.join("artifacts").join(&job.id), &mut result.artifacts)?;
+        if layout.temp.exists() {
+            std::fs::remove_dir_all(&layout.temp)?;
         }
         #[cfg(not(target_os = "linux"))]
         result.limits.push(

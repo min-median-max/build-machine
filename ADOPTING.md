@@ -150,7 +150,9 @@ Each step can set variables through `$GITHUB_ENV` and add to PATH through
 `GITHUB_EVENT_NAME` and `GITHUB_JOB` are set.
 
 **Checkout** — every job starts in an empty `GITHUB_WORKSPACE`
-(`<work>/<repository>/<repository>`, as on a runner), and `actions/checkout`
+(`$HOME/work/<repository>/<repository>`, as a runner checks out to
+`/home/runner/work/<repository>/<repository>`; `RUNNER_WORKSPACE` is
+`$HOME/work/<repository>` and `RUNNER_TEMP` lies under `$HOME/work/_temp`), and `actions/checkout`
 makes it a Git repository at the replayed revision with the commands the
 action runs: one commit by default, every branch and tag at `fetch-depth: 0`,
 and the branch or tag of the replay checked out (a commit is checked out

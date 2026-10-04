@@ -134,7 +134,9 @@ Windows에서는 PowerShell로 실행합니다. 단계는 workflow 순서대로 
 `GITHUB_REF`, `GITHUB_REF_NAME`, `GITHUB_EVENT_NAME`, `GITHUB_JOB`이 설정됩니다.
 
 **Checkout** — 모든 job은 runner처럼 빈 `GITHUB_WORKSPACE`
-(`<work>/<저장소>/<저장소>`)에서 시작하고, `actions/checkout`이 그 action의 명령으로
+(runner가 `/home/runner/work/<저장소>/<저장소>`에 checkout하듯
+`$HOME/work/<저장소>/<저장소>`, `RUNNER_WORKSPACE`는 `$HOME/work/<저장소>`, `RUNNER_TEMP`는
+`$HOME/work/_temp` 아래)에서 시작하고, `actions/checkout`이 그 action의 명령으로
 재현하는 revision의 Git 저장소를 만듭니다. 기본은 commit 하나, `fetch-depth: 0`은 모든
 branch와 tag이며, 재현하는 branch나 tag를 checkout합니다(commit은 detached로 checkout).
 기록은 Git bundle로 보낸 이 저장소 자신의 branch, tag, `HEAD`이고 `origin`인 로컬

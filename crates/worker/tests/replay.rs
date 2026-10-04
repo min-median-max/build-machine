@@ -191,3 +191,22 @@ fn a_replay_does_not_see_the_variables_of_the_machine_s_builds() {
     ]);
     assert_eq!(base, vec![pair("CI", "true"), pair("KEEP", "1")]);
 }
+
+/// A job runs in the runner's own layout, `$HOME/work/<repo>/<repo>`, as a
+/// runner checks out to /home/runner/work/<repo>/<repo>. Under the worker's
+/// state directory the workspace was about 85 characters long, and orm's
+/// MySQL socket under the checkout passed the 107-byte limit of a unix
+/// socket path ("The socket file path is too long (> 107)").
+#[test]
+fn a_job_runs_in_the_runner_s_workspace_layout() {
+    use build_machine_worker::ci::runner_work;
+    let work = runner_work(std::path::Path::new("/home/parallels"), "orm");
+    assert_eq!(work.runner_workspace, std::path::Path::new("/home/parallels/work/orm"));
+    assert_eq!(work.workspace, std::path::Path::new("/home/parallels/work/orm/orm"));
+    assert_eq!(work.temp, std::path::Path::new("/home/parallels/work/_temp"));
+    let socket = work.workspace.join(".runtime/servers/mysql-replica/replica.sock");
+    assert!(socket.to_string_lossy().len() <= 107, "{}", socket.display());
+    // The same socket under the runner's own home is as long as on GitHub.
+    let github = runner_work(std::path::Path::new("/home/runner"), "orm").workspace.join(".runtime/servers/mysql-replica/replica.sock");
+    assert_eq!(github.to_string_lossy().len() + "parallels".len() - "runner".len(), socket.to_string_lossy().len());
+}
