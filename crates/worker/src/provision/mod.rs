@@ -105,6 +105,11 @@ impl Tools {
         home_directory().map(|home| home.join(".cargo").join("bin")).unwrap_or_default()
     }
 
+    /// The managed tool directories that come first on PATH.
+    pub fn managed_path_entries(&self) -> Result<Vec<PathBuf>> {
+        Ok(self.managed_paths(&home_directory()?))
+    }
+
     fn managed_paths(&self, home: &Path) -> Vec<PathBuf> {
         let mut paths = vec![
             if self.platform == Platform::Windows { self.node_directory() } else { self.node_directory().join("bin") },

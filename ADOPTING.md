@@ -64,7 +64,11 @@ Those builds load libraries the runner image carries. The Linux profile of
 (`image`: `ubuntu-26.04-arm`, the apt packages of its published toolset and its
 PHP 8.5 packages), `setup` installs them and `doctor` checks them. What of the
 image the machine does not provide is listed there and recorded as a limit of
-every replay of a job on that runner. A replay does not pin Rust either: the workflow's
+every replay of a job on that runner. The image's `/etc/environment` is
+declared there too: steps run with its `PATH` (`/usr/sbin` and `/sbin`
+included) after the machine's managed tool directories, and with
+`DEBIAN_FRONTEND=noninteractive`, `ACCEPT_EULA=Y` and `XDG_CONFIG_HOME`, as on
+the image. A replay does not pin Rust either: the workflow's
 `rust-toolchain.toml` or rustup call selects it, as on a runner.
 
 Make your project work with the declared Node.js, pnpm, Rust and Go, or change

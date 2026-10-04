@@ -127,6 +127,11 @@ pub struct Image {
     /// records it as a limit.
     #[serde(rename = "notProvided")]
     pub not_provided: Vec<String>,
+    /// The variables the image's /etc/environment sets that a replay
+    /// provides, `PATH` among them. `$HOME` stands for the replaying user's
+    /// home directory.
+    #[serde(default)]
+    pub environment: std::collections::BTreeMap<String, String>,
 }
 
 impl Profile {

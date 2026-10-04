@@ -32,6 +32,7 @@ Workflow replay runs a workflow the way a runner does, so a repository's CI can 
 - setup-php proves a PHP release runs before it becomes `php`: `php<v> -v` and its declared extensions. A release that does not run fails the step naming the libraries `ldd` reports missing, and the alternatives are put back as they were. The adapter switched `php` to the 8.4 build that could not start, which left every later `php` call on the machine failing.
 - The runner image's packages are installed as actions/runner-images installs them: `apt-get install --no-install-recommends` with phased updates included. They were installed with apt's recommendations, which added packages the image does not have (22 on the Linux machine, from `debhelper` to `ssh-import-id`). The machine's own packages keep apt's defaults.
 - A replay removes each job's workspace when the job ends, after moving the artifacts its result names beside it, and applies the `retention` byte cap before it starts as well as after it succeeds. Two orm replays had left 21 GB of workspaces in the Linux machine.
+- Replay steps run under the runner image's declared `/etc/environment`: its `PATH`, with `/usr/sbin` and `/sbin`, after the managed tool directories, and `DEBIAN_FRONTEND=noninteractive`, `ACCEPT_EULA=Y` and `XDG_CONFIG_HOME`. The Linux worker's `runuser -l` login gave steps login.defs' `ENV_PATH` without `/usr/sbin`, so orm's `command -v mysqld` found nothing.
 
 ## 0.1.0
 

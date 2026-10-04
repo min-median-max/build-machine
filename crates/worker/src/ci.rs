@@ -177,11 +177,34 @@ fn checkout_step(step: &Step, workspace: &Path, request: &WorkRequest, environme
     )
 }
 
+/// A replay's environment under the runner image's: its /etc/environment
+/// variables, `$HOME` expanded, and its `PATH` after the machine's managed
+/// tool directories, in place of the PATH the worker was started with.
+pub fn image_environment(
+    base: &[(String, String)],
+    image: &build_machine_core::config::Image,
+    home: &str,
+    managed: &[std::path::PathBuf],
+) -> Vec<(String, String)> {
+    let mut environment = base.to_vec();
+    for (key, value) in &image.environment {
+        let mut value = value.replace("$HOME", home);
+        if key == "PATH" {
+            let mut entries: Vec<String> = managed.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+            entries.push(value);
+            value = entries.join(":");
+        }
+        environment.retain(|(existing, _)| existing != key);
+        environment.push((key.clone(), value));
+    }
+    environment
+}
+
 /// The machine's environment for a replay, without signing credentials and
 /// without the machine's own Rust pin: a workflow selects its toolchain itself,
 /// through `rust-toolchain.toml` or rustup, as it does on a runner.
-fn replay_environment(tools: &Tools) -> Vec<(String, String)> {
-    tools
+fn replay_environment(tools: &Tools) -> Result<Vec<(String, String)>> {
+    let base: Vec<(String, String)> = tools
         .environment
         .iter()
         .filter(|(key, _)| {
@@ -192,7 +215,14 @@ fn replay_environment(tools: &Tools) -> Vec<(String, String)> {
                 )
         })
         .cloned()
-        .collect()
+        .collect();
+    Ok(match &tools.profile()?.image {
+        Some(image) => {
+            let home = crate::provision::home_directory()?.to_string_lossy().into_owned();
+            image_environment(&base, image, &home, &tools.managed_path_entries()?)
+        }
+        None => base,
+    })
 }
 
 /// Every step of the request in workflow order — jobs in `needs` order, each
@@ -591,7 +621,7 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         .context("프로젝트 이름이 없어요.")?;
     let work = directory.join("work");
     let workspace = work.join(&repository).join(&repository);
-    let base = replay_environment(tools);
+    let base = replay_environment(tools)?;
     // The byte cap of machine.json retention holds before a replay adds to the
     // machine, not only after one succeeds.
     crate::workspace::prune(&root, &directory, &tools.machine.retention)?;

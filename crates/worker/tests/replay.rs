@@ -143,3 +143,33 @@ fn a_finished_job_leaves_only_its_artifacts() {
     assert_eq!(build_machine_core::source::sha256_file(&kept).unwrap(), sha256);
     assert_eq!(artifacts[1].path, elsewhere.to_string_lossy());
 }
+
+/// Steps see the runner image's declared environment. The Linux worker runs
+/// through `runuser -l`, whose PATH comes from login.defs ENV_PATH and has no
+/// /usr/sbin, so orm's `test "$(command -v mysqld)" = /usr/sbin/mysqld` failed
+/// where the image's /etc/environment PATH finds it.
+#[test]
+fn a_replay_runs_under_the_runner_image_s_environment() {
+    use build_machine_core::config::Machine;
+    use build_machine_worker::ci::image_environment;
+    let machine = Machine::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../machine.json")).unwrap();
+    let image = machine.profile(build_machine_core::Platform::Linux).unwrap().image.clone().unwrap();
+    let base = vec![
+        ("PATH".to_owned(), "/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games".to_owned()),
+        ("HOME".to_owned(), "/home/parallels".to_owned()),
+        ("KEEP".to_owned(), "1".to_owned()),
+    ];
+    let managed = vec![std::path::PathBuf::from("/home/parallels/.local/share/build-machine/node/bin")];
+    let environment = image_environment(&base, &image, "/home/parallels", &managed);
+    let value = |key: &str| environment.iter().find(|(name, _)| name == key).map(|(_, value)| value.as_str());
+    let path = value("PATH").unwrap();
+    assert!(path.starts_with("/home/parallels/.local/share/build-machine/node/bin:/snap/bin:/home/parallels/.local/bin:"), "{path}");
+    for entry in ["/usr/local/sbin", "/usr/sbin", "/sbin", "/home/parallels/.cargo/bin"] {
+        assert!(path.split(':').any(|part| part == entry), "{entry} in {path}");
+    }
+    assert!(!path.contains("$HOME"), "{path}");
+    assert_eq!(value("DEBIAN_FRONTEND"), Some("noninteractive"));
+    assert_eq!(value("XDG_CONFIG_HOME"), Some("/home/parallels/.config"));
+    assert_eq!(value("KEEP"), Some("1"));
+    assert_eq!(environment.iter().filter(|(name, _)| name == "PATH").count(), 1);
+}

@@ -56,7 +56,9 @@ runner처럼 비밀번호 없는 `sudo`로 설치합니다. 그런 빌드가 없
 Linux 프로필은 자신이 대신하는 이미지(`image`: `ubuntu-26.04-arm`, 공개된 toolset의 apt
 패키지와 PHP 8.5 패키지)를 선언하고, `setup`이 설치하며 `doctor`가 확인합니다. 머신이
 제공하지 않는 이미지 내용은 거기에 적고, 그 runner의 job을 재현할 때마다 제한으로
-기록합니다. 재현은 Rust도 고정하지 않습니다. runner에서처럼 workflow의
+기록합니다. 이미지의 `/etc/environment`도 거기에 선언합니다. 단계는 머신이 관리하는 도구
+디렉터리 뒤에 이미지의 `PATH`(`/usr/sbin`, `/sbin` 포함)를 두고, 이미지처럼
+`DEBIAN_FRONTEND=noninteractive`, `ACCEPT_EULA=Y`, `XDG_CONFIG_HOME`과 함께 실행합니다. 재현은 Rust도 고정하지 않습니다. runner에서처럼 workflow의
 `rust-toolchain.toml`이나 rustup 호출이 고릅니다.
 
 선언된 Node.js·pnpm·Rust·Go에서 프로젝트가 동작하게 하거나, `machine.json`을 바꾸고

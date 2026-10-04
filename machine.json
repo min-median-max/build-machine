@@ -104,7 +104,8 @@
         "source": [
           "https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Arm64-Readme.md",
           "https://github.com/actions/runner-images/blob/main/images/ubuntu/toolsets/toolset-2604-arm64.json (apt.vital_packages, apt.common_packages, apt.cmd_packages, php.versions)",
-          "https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/install-php.sh (PHP 8.5 packages, php-pear, snmp)"
+          "https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/install-php.sh (PHP 8.5 packages, php-pear, snmp)",
+          "https://github.com/actions/runner-images/tree/main/images/ubuntu/scripts/build (the /etc/environment changes of the scripts build.ubuntu-26_04-arm64.pkr.hcl runs: prepend_etc_environment_path in install-dotnetcore-sdk.sh, install-php.sh, install-rust.sh, install-python.sh and configure-snap.sh over Ubuntu's /etc/environment PATH; DEBIAN_FRONTEND in configure-dpkg.sh; ACCEPT_EULA and XDG_CONFIG_HOME in configure-environment.sh)"
         ],
         "packages": [
           "bzip2",
@@ -231,8 +232,14 @@
           "Docker, Homebrew, pipx packages, browsers and drivers, Android SDK",
           "PostgreSQL 18 and MySQL 8.4 services, apache2 and nginx",
           "The image's PHP configuration: its preinstalled Composer and PHPUnit, and PCOV disabled with phpdismod (the PHP 8.5 packages, Xdebug and PCOV among them, are installed with their package defaults)",
-          "The image's environment variables, users and system configuration"
-        ]
+          "The image's other /etc/environment variables, for software or settings the machine does not provide: ImageOS, ImageVersion, AGENT_TOOLSDIRECTORY, RUNNER_TOOL_CACHE, ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE, AZURE_EXTENSION_DIR, DOTNET_*, GECKOWEBDRIVER, JAVA_HOME*, ANT_HOME, GRADLE_HOME, NVM_DIR, USE_BAZEL_FALLBACK_VERSION, SELENIUM_JAR_PATH, VCPKG_*, PIPX_BIN_DIR, PIPX_HOME, HOMEBREW_*; and the image's users and system configuration"
+        ],
+        "environment": {
+          "PATH": "/snap/bin:$HOME/.local/bin:/opt/pipx_bin:$HOME/.cargo/bin:$HOME/.config/composer/vendor/bin:$HOME/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+          "DEBIAN_FRONTEND": "noninteractive",
+          "ACCEPT_EULA": "Y",
+          "XDG_CONFIG_HOME": "$HOME/.config"
+        }
       }
     }
   }
