@@ -164,3 +164,20 @@ fn a_failed_replay_keeps_its_whole_report() {
     assert_eq!(step.exit_code, Some(2));
     assert_eq!(step.output.as_deref().map(str::len), Some(6000));
 }
+
+/// Replay 4 of orm: the worker's `ERROR:` line on standard error arrived
+/// between `BUILD_MACHINE_REPORT_BEGIN` and the report on standard output, the
+/// report read as "expected value at line 1 column 1", and the result kept no
+/// step. The report is read from standard output alone.
+#[test]
+fn a_report_is_read_from_standard_output_alone() {
+    let protocol = build_machine_core::request::PROTOCOL;
+    let report = r#"{"success":false,"status":"failed","finishedAt":"now","attempts":1,"log":"","error":"step 13 (database servers) exited with 2","stages":{"setup":{"status":"failed","startedAt":"now","steps":[{"index":13,"name":"database servers","adapter":"run","status":"failed","startedAt":"now","exitCode":2}]}}}"#;
+    let fixture = fixture(&format!(
+        "if [ \"$1\" = protocol ]; then echo {protocol}; exit 0; fi\necho BUILD_MACHINE_REPORT_BEGIN\nsleep 0.2\necho 'ERROR: step 13 (database servers) exited with 2' >&2\nsleep 0.2\necho '{report}'\necho BUILD_MACHINE_REPORT_END\nexit 1"
+    ));
+    let run = replay(&fixture);
+    let result = &run.results[&Platform::Macos];
+    assert_eq!(result.error.as_deref(), Some("step 13 (database servers) exited with 2"), "{run:#?}");
+    assert_eq!(result.stages["setup"].steps[0].exit_code, Some(2));
+}

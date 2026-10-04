@@ -250,7 +250,10 @@ pub fn prlctl_path() -> Result<PathBuf> {
 #[derive(Debug)]
 pub struct CommandFailed {
     pub code: Option<i32>,
+    /// Standard output and standard error, interleaved as they arrived.
     pub output: String,
+    /// Standard output alone, where a worker writes its report.
+    pub stdout: String,
 }
 
 impl std::fmt::Display for CommandFailed {
@@ -329,24 +332,30 @@ fn stream_command(mut command: Command, log: &OperationLog) -> Result<String> {
     let mut child = command.spawn().context("워커를 시작하지 못했어요.")?;
     let stdout = child.stdout.take().context("출력 스트림이 없어요.")?;
     let stderr = child.stderr.take().context("표준 오류 스트림이 없어요.")?;
+    // Both streams go to one interleaved capture for the error a person
+    // reads; standard output is also kept alone, because the two streams
+    // interleave by line and a worker's report must not take in a line of
+    // its standard error.
     let captured = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let error_capture = captured.clone();
     let error_log = log.clone();
-    let error_thread = std::thread::spawn(move || pump(stderr, &error_capture, &error_log, Stream::Stderr));
-    pump(stdout, &captured, log, Stream::Stdout);
+    let error_thread = std::thread::spawn(move || pump(stderr, &error_capture, None, &error_log, Stream::Stderr));
+    let mut standard_output = String::new();
+    pump(stdout, &captured, Some(&mut standard_output), log, Stream::Stdout);
     let status = child.wait()?;
     let _ = error_thread.join();
     let output = captured.lock().unwrap().clone();
     log.exit_code(status.code().unwrap_or(-1));
     if !status.success() {
-        return Err(CommandFailed { code: status.code(), output }.into());
+        return Err(CommandFailed { code: status.code(), output, stdout: standard_output }.into());
     }
-    Ok(output)
+    Ok(standard_output)
 }
 
 fn pump<R: std::io::Read>(
     reader: R,
     captured: &std::sync::Arc<std::sync::Mutex<String>>,
+    mut alone: Option<&mut String>,
     log: &OperationLog,
     stream: Stream,
 ) {
@@ -361,6 +370,9 @@ fn pump<R: std::io::Read>(
                 let text = String::from_utf8_lossy(&buffer).into_owned();
                 log.raw(stream, &text);
                 captured.lock().unwrap().push_str(&text);
+                if let Some(alone) = alone.as_deref_mut() {
+                    alone.push_str(&text);
+                }
             }
         }
     }

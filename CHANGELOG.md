@@ -41,6 +41,7 @@ Workflow replay runs a workflow the way a runner does, so a repository's CI can 
 - A worker is reported as older than the controller only when it rejects the `protocol` command. Any other failure to ask it, such as Parallels not starting the command, is reported as itself; a transport error was reported as an old worker.
 - After Linux work the controller compacts the VM's disks with the VM stopped: guest `reclaim`, `prlctl stop`, `prl_disk_tool compact`, `prlctl start`, a wait for the guest, then `setup-system` and `doctor`. The platform result records each image's allocated and apparent bytes before and after. Online compaction after the guest's TRIM gave space back in one of three measured runs.
 - A failed replay keeps its whole report: every stage and step, with outputs and exit codes, and the worker's own error. The controller took the worker's non-zero exit after its report as a transport failure and kept only the last 2,500 characters of the output as the error. An error that does show only those characters now says so and points to the platform log.
+- A worker's report is read from its standard output alone. It was read from standard output and standard error interleaved by line, so an error line written while the report was written broke it, and a failed replay lost its steps after all.
 
 ## 0.1.0
 

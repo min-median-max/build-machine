@@ -237,8 +237,8 @@ fn execute_platform(
         // A replay that failed exits non-zero after writing its whole report,
         // which is the result: every step and the error as the worker wrote it.
         Err(error) if operation.action == Action::Ci => {
-            match error.downcast_ref::<crate::transport::CommandFailed>().filter(|failed| failed.output.contains(REPORT_BEGIN)) {
-                Some(failed) => parse_report(&failed.output),
+            match error.downcast_ref::<crate::transport::CommandFailed>().filter(|failed| failed.stdout.contains(REPORT_BEGIN)) {
+                Some(failed) => parse_report(&failed.stdout),
                 None => Err(error),
             }
         }
