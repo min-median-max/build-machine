@@ -188,6 +188,35 @@ impl Tools {
     }
 }
 
+/// The `apt-get` commands that install missing Linux packages.
+///
+/// The machine's own packages keep apt's defaults, as their installation
+/// guides use them. Its runner image's packages are installed as
+/// actions/runner-images installs them: `--no-install-recommends`
+/// (install-apt-vital.sh, install-apt-common.sh, install-php.sh) with phased
+/// updates included (configure-apt.sh), so the machine does not carry what
+/// their recommendations would add.
+pub fn apt_install_commands(profile: &Profile, missing: &[String]) -> Vec<Vec<String>> {
+    let own = |package: &String| ["git", "python3"].contains(&package.as_str()) || profile.packages.contains(package);
+    let (machine, image): (Vec<String>, Vec<String>) = missing.iter().cloned().partition(own);
+    let mut commands = Vec::new();
+    if !machine.is_empty() {
+        let mut command = vec!["install".to_owned(), "-y".to_owned()];
+        command.extend(machine);
+        commands.push(command);
+    }
+    if !image.is_empty() {
+        let mut command: Vec<String> =
+            ["install", "-y", "--no-install-recommends", "-o", "APT::Get::Always-Include-Phased-Updates=true"]
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect();
+        command.extend(image);
+        commands.push(command);
+    }
+    commands
+}
+
 /// Download a file with the platform's own client.
 ///
 /// Every machine this runs on already has `curl`: macOS and Windows ship it,

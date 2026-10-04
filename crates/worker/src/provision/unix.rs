@@ -93,9 +93,9 @@ pub fn setup_system(tools: &Tools) -> Result<()> {
     let mut environment = tools.environment.clone();
     environment.push(("DEBIAN_FRONTEND".to_owned(), "noninteractive".to_owned()));
     stream::checked("apt-get", &["update".to_owned()], None, &environment)?;
-    let mut arguments = vec!["install".to_owned(), "-y".to_owned()];
-    arguments.extend(missing);
-    stream::checked("apt-get", &arguments, None, &environment)?;
+    for arguments in super::apt_install_commands(tools.profile()?, &missing) {
+        stream::checked("apt-get", &arguments, None, &environment)?;
+    }
     ensure_desktop(tools)
 }
 
