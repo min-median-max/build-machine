@@ -22,6 +22,8 @@ A Parallels disk (`type='expanded'`) grows as the guest writes and keeps the blo
 
 The controller turns on `online-compact` for every disk of the Linux VM that lacks it before setup, build, release and replay, and afterwards — whether the work succeeded or not — runs the worker's elevated `reclaim`, which is `fstrim --all` in the guest. Measure the result by the blocks the `.hds` file allocates (`du -k`), not by its apparent size (`ls`, Finder), which stays at its largest: on 2026-10-04 the image stayed at 42,838,523,904 bytes apparent while its allocation fell from 40 GB to 26,993,664 KiB after `fstrim` trimmed 37.6 GiB in the running guest.
 
+Online compaction after the guest's TRIM is not reliable: of three measured trims on 2026-10-04 (4 GiB, 8.8 GiB, 8.9 GiB), one gave the space back within 30 seconds and two left the image unchanged for 10 and 15 minutes. Compaction with the VM stopped does give it back once the guest has trimmed: `prlctl stop`, then `prl_disk_tool compact --hdd "<vm>.pvm/harddisk1.hdd"`, took 7 seconds and shrank the image from 35,398,656 KiB to 27,033,600 KiB, its apparent size from 36.2 GB to 27.7 GB. Run it when no work uses the VM.
+
 ## Current implementation status
 
 The macOS [desktop controller](GUI.md) and the `build-machine` command are two front ends over one controller library. Its tool results persist separately from VM connection state. Current supported project layouts and framework gaps are defined in [PROJECTS.md](PROJECTS.md). Parallels command stability remains a known issue recorded in [verification.md](verification.md).

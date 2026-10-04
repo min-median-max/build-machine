@@ -22,6 +22,8 @@ Parallels 디스크(`type='expanded'`)는 게스트가 쓰는 만큼 커지고, 
 
 컨트롤러는 setup, build, release, 재현 전에 Linux VM의 디스크 중 `online-compact`가 꺼진 것을 켜고, 작업이 끝나면 성공 여부와 상관없이 워커의 권한 명령 `reclaim`(게스트의 `fstrim --all`)을 실행합니다. 결과는 `.hds` 파일의 겉보기 크기(`ls`, Finder)가 아니라 할당된 블록(`du -k`)으로 측정합니다. 겉보기 크기는 가장 컸던 크기에 머뭅니다. 2026-10-04에 실행 중인 게스트에서 `fstrim`이 37.6 GiB를 trim한 뒤 이미지의 겉보기 크기는 42,838,523,904 bytes 그대로였고 할당은 40 GB에서 26,993,664 KiB로 줄었습니다.
 
+게스트 TRIM 뒤의 online compaction은 믿을 수 없습니다. 2026-10-04에 측정한 세 번의 trim(4 GiB, 8.8 GiB, 8.9 GiB) 중 한 번만 30초 안에 공간을 돌려줬고, 두 번은 10분, 15분 동안 이미지가 그대로였습니다. 게스트가 trim한 뒤 VM을 멈추고 압축하면 돌려줍니다. `prlctl stop` 뒤 `prl_disk_tool compact --hdd "<vm>.pvm/harddisk1.hdd"`가 7초 걸렸고 이미지가 35,398,656 KiB에서 27,033,600 KiB로, 겉보기 크기가 36.2 GB에서 27.7 GB로 줄었습니다. VM을 쓰는 작업이 없을 때 실행합니다.
+
 ## 현재 구현 상태
 
 macOS [데스크톱 제어 앱](GUI.ko.md)은 유지보수하는 같은 명령을 호출합니다. 도구 검사 결과는 VM 연결 상태와 구분해서 유지합니다. 현재 지원하는 프로젝트 구조와 프레임워크별 미지원 범위는 [PROJECTS.ko.md](PROJECTS.ko.md)에 정의합니다. Parallels 명령의 간헐적 실패는 [verification.md](verification.md)에 기록한 알려진 문제입니다.
