@@ -17,6 +17,7 @@ pub enum Adapter {
     TauriBuild,
     ArtifactUpload,
     ArtifactDownload,
+    CreatePullRequest,
     /// `actions/upload-pages-artifact`: the site a later deploy-pages step
     /// deploys.
     PagesArtifact,
@@ -43,6 +44,7 @@ impl Adapter {
             Adapter::TauriBuild => "tauri-build",
             Adapter::ArtifactUpload => "artifact-upload",
             Adapter::ArtifactDownload => "artifact-download",
+            Adapter::CreatePullRequest => "create-pull-request",
             Adapter::PagesArtifact => "pages-artifact",
             Adapter::DeployPages => "deploy-pages",
             Adapter::Release => "release",
@@ -68,6 +70,7 @@ impl Adapter {
             "tauri-apps/tauri-action" => Adapter::TauriBuild,
             "actions/upload-artifact" => Adapter::ArtifactUpload,
             "actions/download-artifact" => Adapter::ArtifactDownload,
+            "peter-evans/create-pull-request" => Adapter::CreatePullRequest,
             "actions/upload-pages-artifact" => Adapter::PagesArtifact,
             "actions/deploy-pages" => Adapter::DeployPages,
             "softprops/action-gh-release" => Adapter::Release,
@@ -91,7 +94,11 @@ impl Adapter {
             | Adapter::Cache
             | Adapter::ArtifactDownload => "setup",
             Adapter::TauriBuild => "build",
-            Adapter::ArtifactUpload | Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release => "release",
+            Adapter::ArtifactUpload
+            | Adapter::PagesArtifact
+            | Adapter::DeployPages
+            | Adapter::Release
+            | Adapter::CreatePullRequest => "release",
             // A shell step is classified by its own name and command; a skip
             // marker is placed directly into the stage it stands for.
             Adapter::Run | Adapter::Skip => return None,
@@ -140,6 +147,12 @@ impl Adapter {
             // `run-id` names an earlier replay. `pattern` and `repository`
             // would download something else.
             Adapter::ArtifactDownload => &["name", "path", "run-id", "github-token"],
+            // The replay records the proposed branch and files; `token` has no
+            // value. Inputs that change how the action pushes or labels the
+            // pull request (`push-to-fork`, `labels`, `draft`, …) are refused.
+            Adapter::CreatePullRequest => {
+                &["token", "path", "branch", "base", "title", "body", "commit-message", "add-paths"]
+            }
             // The replay records the release of `files` and `body_path` under
             // the replayed tag or `tag_name`; the other inputs would publish
             // another release.
@@ -151,7 +164,7 @@ impl Adapter {
     /// Adapters that replace an external GitHub service and must be recorded as
     /// a limit rather than reported as a completed publication.
     pub fn is_external_service(&self) -> bool {
-        matches!(self, Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release)
+        matches!(self, Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release | Adapter::CreatePullRequest)
     }
 }
 

@@ -403,6 +403,28 @@ fn execute(
             ran.output = Some(summary);
             ran
         }
+        Adapter::CreatePullRequest => {
+            let root = source.join(step.with.get("path").map(String::as_str).unwrap_or("."));
+            let files = crate::pull_request::proposed(&root, step.with.get("add-paths").map(String::as_str))?;
+            let branch = step.with.get("branch").map(String::as_str).unwrap_or("create-pull-request/patch");
+            let base = step.with.get("base").map(String::as_str).unwrap_or("the checked-out branch");
+            let title = step.with.get("title").map(String::as_str).unwrap_or("Changes by create-pull-request action");
+            let mut summary = format!(
+                "dry-run: not pushed. A pull request from {branch} into {base}, \"{title}\", would hold {} files:",
+                files.len()
+            );
+            for file in &files {
+                summary.push_str(&format!("\n{} {} {}", file.sha256, file.size, file.path));
+            }
+            println!("{summary}");
+            result.limits.push(format!(
+                "{}: dry-run: nothing pushed and no pull request opened; the proposed files are recorded in the step output.",
+                step.name
+            ));
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.output = Some(summary);
+            ran
+        }
         Adapter::PagesArtifact => {
             let name = step.with.get("name").map(String::as_str).unwrap_or("github-pages");
             let path = step.with.get("path").map(String::as_str).unwrap_or("_site/");

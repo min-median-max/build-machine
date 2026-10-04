@@ -128,8 +128,14 @@ validation rather than being quietly changed into something else.
 `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
 `tauri-apps/tauri-action`, `actions/upload-artifact`,
 `actions/download-artifact`, `actions/upload-pages-artifact`,
-`actions/deploy-pages`, `softprops/action-gh-release`. An action's owner and
-name match without regard to case, as on GitHub. upload-artifact keeps the
+`actions/deploy-pages`, `softprops/action-gh-release`,
+`peter-evans/create-pull-request`. An action's owner and name match without
+regard to case, as on GitHub. create-pull-request pushes nothing and opens no
+pull request: it records the branch, the base, the title and the files that
+changed in the repository of `path` against its checked-out commit, limited to
+`add-paths`, with their sizes and SHA-256 (a deleted file has `deleted`), and
+inputs other than `token`, `path`, `branch`, `base`, `title`, `body`,
+`commit-message` and `add-paths` fail validation. upload-artifact keeps the
 files of `path` (one relative path per line, laid out under their least common
 ancestor) as the artifact `name` of the run on this machine, and a path that
 matches nothing adds none, as the action's default warning does;

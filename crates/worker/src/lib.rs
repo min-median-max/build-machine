@@ -16,6 +16,7 @@ pub mod macos;
 pub mod package;
 pub mod pages;
 pub mod provision;
+pub mod pull_request;
 pub mod release;
 pub mod run;
 pub mod runner;

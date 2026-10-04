@@ -4,6 +4,7 @@
 
 workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 push하기 전에 여기서 확인할 수 있습니다.
 
+- `peter-evans/create-pull-request`는 기록하는 dry run입니다. 재현은 아무것도 push하지 않고 branch, base, 제목, `add-paths` 아래 바뀐 파일을 SHA-256과 함께 기록합니다. soksak component release는 이 action으로 registry에 pull request를 여는데, 어댑터가 없었고 단계 안의 `git push`는 머신의 자격 증명으로 GitHub에 닿았을 것입니다.
 - 재현하는 모든 job은 PATH 맨 앞에서 재현 자신의 `gh`를 찾습니다. 이 `gh`는 `ci run --pull-request <file>`이 선언한 pull request로 `gh pr view`에 답하고, 선언한 head commit의 `gh pr merge`를 dry run으로 기록하며, 그 밖의 `gh` 명령은 실패합니다. 이전에는 단계가 GitHub에 로그인되어 있을 수 있는 머신의 `gh`를 실행했으므로, soksak registry의 `merge.yml`을 재현하면 실제 pull request를 merge했을 것입니다.
 - `uses: ./.github/workflows/<file>`로 같은 저장소의 재사용 workflow를 부르는 job은 그 자리에서 그 workflow의 job을 `<부르는 job>/<불린 job>` 이름으로 실행합니다. 불린 workflow는 `on: workflow_call`을 선언해야 하고, ref 재현은 그것을 그 ref에서 읽습니다. soksak registry의 `merge.yml`은 merge 뒤 `publish.yml`을 부르는데, 검증이 그 job을 거부했습니다.
 - `actions/upload-artifact`는 올린 파일을 이 Mac의 run artifact로 보관하고, `actions/download-artifact`는 run이나 `run-id`가 가리키는 이전 재현의 artifact를 `path`에 둡니다. 업로드는 제한 기록으로 대신되어 아무것도 보관하지 않았고 다운로드는 어댑터가 없었으므로, `workflow_run`으로 `validate.yml`을 잇는 soksak registry의 `merge.yml`이 검사한 pull request를 읽지 못했습니다. 비밀이나 token을 가리키는 `with` 값은 `env` 값처럼 더 이상 표현식으로 읽지 않습니다.

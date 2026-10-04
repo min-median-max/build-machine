@@ -117,8 +117,12 @@ PowerShell은 모든 줄을 실행하고 마지막 종료 코드만 보고하므
 `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
 `tauri-apps/tauri-action`, `actions/upload-artifact`,
 `actions/download-artifact`, `actions/upload-pages-artifact`,
-`actions/deploy-pages`, `softprops/action-gh-release`. action의 owner와 이름은 GitHub처럼
-대소문자를 구분하지 않습니다. upload-artifact는 `path`의 파일(한 줄에 상대 경로 하나, 가장 가까운
+`actions/deploy-pages`, `softprops/action-gh-release`,
+`peter-evans/create-pull-request`. action의 owner와 이름은 GitHub처럼 대소문자를 구분하지
+않습니다. create-pull-request는 아무것도 push하지 않고 pull request를 열지 않습니다. `path`
+저장소에서 checkout한 commit에 대해 바뀐 파일을 `add-paths` 범위로 크기, SHA-256(지운 파일은
+`deleted`)과 함께 branch, base, 제목과 같이 기록하며, `token`, `path`, `branch`, `base`, `title`,
+`body`, `commit-message`, `add-paths` 외의 입력은 검증에서 실패합니다. upload-artifact는 `path`의 파일(한 줄에 상대 경로 하나, 가장 가까운
 공통 상위 폴더 아래 배치)을 이 Mac의 run의 artifact `name`으로 보관하며, 아무것도 맞지 않는
 경로는 action의 기본 경고처럼 파일을 더하지 않습니다. download-artifact는 run이나 `run-id`가
 가리키는 이전 재현의 artifact `name`을 `path`에 둡니다. GitHub에는 아무것도 보내지 않고 각각
