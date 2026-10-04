@@ -13,6 +13,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// How long the output streams are read after the process exits, when a
+/// process it started still holds them. GitHub's runner waits this long and
+/// then completes the step (`ProcessInvoker.ProcessExitedHandler`).
+pub const STREAM_GRACE: Duration = Duration::from_secs(5);
+
 pub struct Finished {
     pub code: i32,
     /// Interleaved stdout and stderr, in the order they happened.
@@ -98,9 +103,19 @@ pub fn run(
 
     let stdout = child.stdout.take().context("표준 출력 스트림이 없어요.")?;
     let stderr = child.stderr.take().context("표준 오류 스트림이 없어요.")?;
+    // Both streams are read on their own threads, which report when they
+    // reach the end. A process the step started in the background can hold a
+    // stream open long after the step itself exited.
     let captured = Arc::new(Mutex::new(String::new()));
-    let error_capture = captured.clone();
-    let error_thread = std::thread::spawn(move || pump(stderr, &error_capture));
+    let (closed, streams_closed) = std::sync::mpsc::channel::<()>();
+    for reader in [Box::new(stdout) as Box<dyn std::io::Read + Send>, Box::new(stderr)] {
+        let (captured, closed) = (captured.clone(), closed.clone());
+        std::thread::spawn(move || {
+            pump(reader, &captured);
+            let _ = closed.send(());
+        });
+    }
+    drop(closed);
 
     let done = Arc::new(AtomicBool::new(false));
     let fired = Arc::new(AtomicBool::new(false));
@@ -121,12 +136,19 @@ pub fn run(
         })
     });
 
-    pump(stdout, &captured);
     let status = child.wait()?;
     done.store(true, Ordering::SeqCst);
-    let _ = error_thread.join();
     if let Some(timer) = timer {
         let _ = timer.join();
+    }
+    // The step ends with its process. Its streams are read until they close or
+    // for STREAM_GRACE, as GitHub's runner does; a stream still held after
+    // that belongs to a background process, which is left running.
+    let grace = Instant::now() + STREAM_GRACE;
+    for _ in 0..2 {
+        if streams_closed.recv_timeout(grace.saturating_duration_since(Instant::now())).is_err() {
+            break;
+        }
     }
     let output = captured.lock().unwrap().clone();
     Ok(Finished { code: status.code().unwrap_or(-1), output, timed_out: fired.load(Ordering::SeqCst) })

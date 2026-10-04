@@ -20,6 +20,17 @@ pub enum Expression {
     Or(Box<Expression>, Box<Expression>),
 }
 
+/// Where a job stands when a step's condition is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobStatus {
+    Success,
+    /// An earlier step failed or exceeded its own `timeout-minutes`.
+    Failure,
+    /// The job exceeded its `timeout-minutes`, and GitHub cancelled it.
+    Cancelled,
+}
+
 /// A parsed `if:` condition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Condition {
@@ -53,19 +64,20 @@ impl Condition {
         Ok(Condition::Expression { expression, uses_status })
     }
 
-    /// Whether the step runs, given whether an earlier step of the job failed.
+    /// Whether the step runs, given where its job stands.
     ///
     /// A condition without a status function is implicitly `success() && (…)`,
-    /// so a step after a failure runs only when its condition says so.
-    pub fn runs(&self, job_failed: bool) -> bool {
+    /// so a step after a failure or a cancellation runs only when its
+    /// condition says so.
+    pub fn runs(&self, status: JobStatus) -> bool {
         match self {
             Condition::Secret => false,
             Condition::Expression { expression, uses_status } => {
-                let value = expression.evaluate(job_failed);
+                let value = expression.evaluate(status);
                 if *uses_status {
                     value
                 } else {
-                    !job_failed && value
+                    status == JobStatus::Success && value
                 }
             }
         }
@@ -82,17 +94,18 @@ impl Expression {
         }
     }
 
-    /// A local replay is never cancelled: a timed-out step is a failed step.
-    fn evaluate(&self, job_failed: bool) -> bool {
+    /// A step that exceeds its own `timeout-minutes` fails; a job that
+    /// exceeds its limit is cancelled.
+    fn evaluate(&self, status: JobStatus) -> bool {
         match self {
             Expression::Literal(value) => *value,
-            Expression::Success => !job_failed,
-            Expression::Failure => job_failed,
+            Expression::Success => status == JobStatus::Success,
+            Expression::Failure => status == JobStatus::Failure,
             Expression::Always => true,
-            Expression::Cancelled => false,
-            Expression::Not(inner) => !inner.evaluate(job_failed),
-            Expression::And(left, right) => left.evaluate(job_failed) && right.evaluate(job_failed),
-            Expression::Or(left, right) => left.evaluate(job_failed) || right.evaluate(job_failed),
+            Expression::Cancelled => status == JobStatus::Cancelled,
+            Expression::Not(inner) => !inner.evaluate(status),
+            Expression::And(left, right) => left.evaluate(status) && right.evaluate(status),
+            Expression::Or(left, right) => left.evaluate(status) || right.evaluate(status),
         }
     }
 }

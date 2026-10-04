@@ -6,9 +6,9 @@ pub mod parse;
 pub mod stage;
 
 pub use adapter::{Adapter, STAGE_ORDER};
-pub use condition::Condition;
-pub use parse::{Job, Step, Workflow};
-pub use stage::{check_gates, stage_counts, stage_of, stages, stages_for};
+pub use condition::{Condition, JobStatus};
+pub use parse::{Job, Step, Workflow, DEFAULT_JOB_TIMEOUT_MINUTES};
+pub use stage::{check_gates, jobs_for, stage_counts, stage_of, stages, stages_for};
 
 use crate::Platform;
 use anyhow::{bail, Context, Result};

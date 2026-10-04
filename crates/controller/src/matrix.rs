@@ -46,7 +46,7 @@ fn write_request(
     operation: &Operation,
     platform: Platform,
     snapshot: &Snapshot,
-    stages: &BTreeMap<String, Vec<build_machine_core::workflow::Step>>,
+    workflow: Option<&build_machine_core::workflow::Workflow>,
     transport: &dyn Transport,
     state: &Path,
 ) -> Result<(PathBuf, String)> {
@@ -64,7 +64,8 @@ fn write_request(
         framework: snapshot.framework.as_deref().and_then(|value| value.parse().ok()),
         command: snapshot.command.clone(),
         artifact: snapshot.artifact.clone(),
-        stages: stages.clone(),
+        jobs: workflow.map(|workflow| build_machine_core::workflow::jobs_for(workflow, Some(platform))).unwrap_or_default(),
+        skips: workflow.map(|workflow| workflow.skips.clone()).unwrap_or_default(),
         workflow_signature: snapshot.workflow_path.as_ref().map(|_| snapshot.source_hash.clone()),
     };
     let path = state
@@ -164,11 +165,8 @@ fn execute_platform(
     // System-wide prerequisites need rights the desktop user does not have, so
     // that step runs on its own before the work the desktop user must do.
     // Each platform receives the jobs its own runner label claims.
-    let stages = workflow
-        .map(|workflow| build_machine_core::workflow::stages_for(workflow, Some(platform)))
-        .unwrap_or_default();
     let request = match snapshot {
-        Some(snapshot) => Some(write_request(operation, platform, snapshot, &stages, transport.as_ref(), state)?.1),
+        Some(snapshot) => Some(write_request(operation, platform, snapshot, workflow, transport.as_ref(), state)?.1),
         None => None,
     };
     if platform != Platform::Macos {

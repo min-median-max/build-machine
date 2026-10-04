@@ -1,7 +1,7 @@
 //! Grouping steps into stages, and the gates a workflow must satisfy.
 
 use super::adapter::{stage_for_shell, Adapter, STAGE_ORDER};
-use super::parse::{Step, Workflow};
+use super::parse::{Job, Step, Workflow};
 use crate::Platform;
 use anyhow::{bail, Result};
 use std::collections::BTreeMap;
@@ -21,45 +21,43 @@ pub fn stages(workflow: &Workflow) -> BTreeMap<String, Vec<Step>> {
     stages_for(workflow, None)
 }
 
-/// The stages to run on one operating system.
+/// The jobs to run on one operating system, in `needs` order.
 ///
 /// A three-OS release workflow has a job per operating system, and `runs-on`
 /// says which is which. Replaying every job everywhere would run the Windows
 /// job on Linux, so a platform takes only the jobs written for it — plus any
 /// job whose runner this machine does not recognise, which constrains nothing.
+pub fn jobs_for(workflow: &Workflow, platform: Option<Platform>) -> Vec<Job> {
+    workflow
+        .jobs
+        .iter()
+        .filter(|job| match (platform, super::platform_for_runner(&job.runs_on)) {
+            (Some(platform), Some(declared)) => declared == platform,
+            _ => true,
+        })
+        .cloned()
+        .collect()
+}
+
+/// The stages a platform reports, each step under the stage it is classified
+/// as. Steps still run in workflow order; this is only how they are grouped.
 pub fn stages_for(workflow: &Workflow, platform: Option<Platform>) -> BTreeMap<String, Vec<Step>> {
     let mut grouped: BTreeMap<String, Vec<Step>> =
         STAGE_ORDER.iter().map(|stage| ((*stage).to_owned(), Vec::new())).collect();
-    for job in &workflow.jobs {
-        if let (Some(platform), Some(declared)) = (platform, super::platform_for_runner(&job.runs_on)) {
-            if declared != platform {
-                continue;
-            }
-        }
-        for step in &job.steps {
-            grouped.entry(stage_of(step).to_owned()).or_default().push(step.clone());
+    for job in jobs_for(workflow, platform) {
+        for step in job.steps {
+            grouped.entry(stage_of(&step).to_owned()).or_default().push(step);
         }
     }
     for stage in ["build", "test", "smoke"] {
         if grouped.get(stage).is_some_and(|steps| steps.is_empty()) {
             if let Some(reason) = workflow.skips.get(stage) {
-                let mut marker = Step {
-                    index: 0,
-                    position: 0,
+                let marker = Step {
                     name: format!("skip {stage}"),
                     adapter: Adapter::Skip,
-                    action: None,
-                    action_ref: None,
-                    run: None,
-                    working_directory: None,
-                    condition: None,
                     reason: Some(reason.clone()),
-                    env: BTreeMap::new(),
-                    with: BTreeMap::new(),
-                    job_env: BTreeMap::new(),
-                    job_id: String::new(),
+                    ..Step::default()
                 };
-                marker.reason = Some(reason.clone());
                 grouped.insert(stage.to_owned(), vec![marker]);
             }
         }

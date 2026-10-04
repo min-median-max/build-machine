@@ -13,20 +13,29 @@ use crate::stream;
 use anyhow::{bail, Result};
 use build_machine_core::report::{Artifact, Outcome, PlatformResult, Stage, Step as ReportStep};
 use build_machine_core::request::WorkRequest;
-use build_machine_core::workflow::{Adapter, Condition, Step, STAGE_ORDER};
+use build_machine_core::workflow::{stage_of, Adapter, Condition, Job, JobStatus, Step};
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SEEDED_LIMIT: &str = "Local CI never signs, notarizes or uploads to GitHub.";
 
-fn timeout_for(stage: &str) -> Duration {
-    Duration::from_secs(match stage {
-        "test" => 1800,
-        "build" => 3600,
-        "smoke" => 600,
-        _ => 900,
-    })
+/// Which limit bounds a step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Limit {
+    /// The step's own `timeout-minutes`. Exceeding it fails the step.
+    Step,
+    /// What is left of the job's `timeout-minutes`. Exceeding it cancels the job.
+    Job,
+}
+
+/// How long a step may run: its own `timeout-minutes` when it declares one,
+/// within what is left of its job's. GitHub sets no other limit on a step.
+pub fn step_limit(step_minutes: Option<u64>, job_remaining: Duration) -> (Duration, Limit) {
+    match step_minutes.map(|minutes| Duration::from_secs(minutes * 60)) {
+        Some(own) if own < job_remaining => (own, Limit::Step),
+        _ => (job_remaining, Limit::Job),
+    }
 }
 
 /// A secret's value is never available locally, so it is replaced by an empty
@@ -119,14 +128,11 @@ fn replay_environment(tools: &Tools) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Every step of the request in workflow order, with the stage it reports under.
-fn ordered_steps(request: &WorkRequest) -> Vec<(&'static str, &Step)> {
-    let mut steps: Vec<(&'static str, &Step)> = STAGE_ORDER
-        .iter()
-        .flat_map(|stage| request.stages.get(*stage).into_iter().flatten().map(move |step| (*stage, step)))
-        .collect();
-    steps.sort_by_key(|(_, step)| step.position);
-    steps
+/// Every step of the request in workflow order — jobs in `needs` order, each
+/// job's steps as written — with the stage it reports under. The stage never
+/// decides when a step runs.
+pub fn ordered_steps(request: &WorkRequest) -> Vec<(&'static str, &Step)> {
+    request.jobs.iter().flat_map(|job| job.steps.iter().map(|step| (stage_of(step), step))).collect()
 }
 
 /// Read one file of the source archive without extracting it.
@@ -209,8 +215,8 @@ fn worst(left: Outcome, right: Outcome) -> Outcome {
 
 #[allow(clippy::too_many_arguments)]
 fn execute(
-    stage_name: &str,
     step: &Step,
+    limit: Option<Duration>,
     source: &Path,
     request: &WorkRequest,
     base: &[(String, String)],
@@ -222,12 +228,6 @@ fn execute(
     let (environment, limits) = step_environment(&runner.environment(base, &files), step);
     result.limits.extend(limits);
     let ran = match step.adapter {
-        Adapter::Skip => {
-            result.limits.push(format!("{stage_name} skipped: {}", step.reason.clone().unwrap_or_default()));
-            let mut ran = Ran::new(Outcome::PassedWithLimits);
-            ran.reason = step.reason.clone();
-            ran
-        }
         Adapter::NodeSetup | Adapter::GoSetup | Adapter::PhpSetup => {
             let installed = match step.adapter {
                 Adapter::NodeSetup => actions::setup_node(step, source, tools, runner)?,
@@ -268,14 +268,13 @@ fn execute(
             let working = working_directory(source, step)?;
             let (shell, arguments) = workflow_shell(&command);
             println!("> {command}");
-            let timeout = timeout_for(stage_name);
-            let finished = stream::run(shell, &arguments, Some(&working), &environment, Some(timeout))?;
+            let finished = stream::run(shell, &arguments, Some(&working), &environment, limit)?;
             let mut ran = Ran::new(Outcome::Passed);
             ran.command = Some(command);
             ran.output = Some(finished.output.clone());
             if finished.timed_out {
                 ran.status = Outcome::Timeout;
-                ran.timeout_seconds = Some(timeout.as_secs());
+                ran.timeout_seconds = limit.map(|limit| limit.as_secs());
             } else {
                 ran.exit_code = Some(finished.code);
                 if finished.code != 0 {
@@ -288,6 +287,135 @@ fn execute(
     };
     runner.finish_step(&files)?;
     Ok(ran)
+}
+
+/// Run one job's steps in order and return where the job stands at its end.
+#[allow(clippy::too_many_arguments)]
+fn run_job(
+    job: &Job,
+    mut runner: Runner,
+    source: &Path,
+    request: &WorkRequest,
+    base: &[(String, String)],
+    tools: &Tools,
+    result: &mut PlatformResult,
+    stages: &mut BTreeMap<&'static str, Stage>,
+    failure: &mut Option<String>,
+) -> Result<JobStatus> {
+    let job_limit = Duration::from_secs(job.timeout_minutes * 60);
+    let started = Instant::now();
+    let mut status = JobStatus::Success;
+    for step in &job.steps {
+        let started_at = build_machine_core::now();
+        let condition = Condition::parse(step.condition.as_deref())?;
+        let ran = if condition == Condition::Secret {
+            result.limits.push("A GitHub secret or token condition is false in the local runner.".to_owned());
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.reason = Some("if condition depends on a secret, which is empty locally".to_owned());
+            ran.skipped = true;
+            ran
+        } else if !condition.runs(status) {
+            let mut ran = Ran::new(Outcome::Skipped);
+            ran.reason = Some(match status {
+                JobStatus::Success => "if condition evaluated false locally".to_owned(),
+                JobStatus::Failure => {
+                    "not run: an earlier step failed and this step's if does not run after a failure".to_owned()
+                }
+                JobStatus::Cancelled => {
+                    "not run: the job was cancelled and this step's if does not run after a cancellation".to_owned()
+                }
+            });
+            ran
+        } else {
+            // A cancelled job has no time left; a step that still runs after
+            // the cancellation is bounded by its own limit only.
+            let remaining = job_limit.saturating_sub(started.elapsed());
+            let (limit, bound) = match (status, step.timeout_minutes) {
+                (JobStatus::Cancelled, minutes) => (minutes.map(|minutes| Duration::from_secs(minutes * 60)), Limit::Step),
+                _ => {
+                    let (limit, bound) = step_limit(step.timeout_minutes, remaining);
+                    (Some(limit), bound)
+                }
+            };
+            let mut ran = match execute(step, limit, source, request, base, tools, &mut runner, result) {
+                Ok(ran) => ran,
+                // An adapter that cannot do its work fails its step, and the
+                // report says why, rather than ending the replay without one.
+                Err(error) => {
+                    let mut ran = Ran::new(Outcome::Failed);
+                    ran.output = Some(format!("{error:#}"));
+                    eprintln!("ERROR: step {} ({}): {error:#}", step.index, step.name);
+                    ran
+                }
+            };
+            if ran.status == Outcome::Timeout {
+                ran.reason = Some(match bound {
+                    Limit::Step => format!("the step exceeded its timeout-minutes of {}", step.timeout_minutes.unwrap_or_default()),
+                    Limit::Job => format!(
+                        "job {} exceeded its timeout-minutes of {}; GitHub cancels the job",
+                        job.id, job.timeout_minutes
+                    ),
+                });
+            }
+            if status == JobStatus::Success || status == JobStatus::Failure {
+                match (ran.status, bound) {
+                    (Outcome::Timeout, Limit::Job) => status = JobStatus::Cancelled,
+                    (Outcome::Failed | Outcome::Timeout, _) => status = JobStatus::Failure,
+                    _ => {}
+                }
+            }
+            ran
+        };
+        if matches!(ran.status, Outcome::Failed | Outcome::Timeout) && failure.is_none() {
+            *failure = Some(format!("step {} ({}) {}", step.index, step.name, match (ran.status, ran.exit_code) {
+                (Outcome::Timeout, _) => "timed out".to_owned(),
+                (_, Some(code)) => format!("exited with {code}"),
+                _ => "failed".to_owned(),
+            }));
+        }
+        record(stages, step, ran, started_at);
+    }
+    Ok(status)
+}
+
+/// Place a step's result in the stage it reports under.
+fn record(stages: &mut BTreeMap<&'static str, Stage>, step: &Step, ran: Ran, started_at: String) {
+    record_in(stages, stage_of(step), step, ran, started_at)
+}
+
+fn record_in(stages: &mut BTreeMap<&'static str, Stage>, stage_name: &'static str, step: &Step, ran: Ran, started_at: String) {
+    let stage = stages.entry(stage_name).or_insert_with(|| Stage {
+        status: Outcome::Skipped,
+        started_at: started_at.clone(),
+        finished_at: None,
+        error: None,
+        steps: Vec::new(),
+    });
+    stage.status = worst(stage.status, ran.status);
+    if matches!(ran.status, Outcome::Failed | Outcome::Timeout) && stage.error.is_none() {
+        stage.error = Some(format!(
+            "step {} ({}) {}",
+            step.index,
+            step.name,
+            if ran.status == Outcome::Timeout { "timed out" } else { "failed" }
+        ));
+    }
+    stage.finished_at = Some(build_machine_core::now());
+    stage.steps.push(ReportStep {
+        index: step.index,
+        name: step.name.clone(),
+        adapter: step.adapter.as_str().to_owned(),
+        status: ran.status,
+        started_at,
+        finished_at: Some(build_machine_core::now()),
+        command: ran.command,
+        exit_code: ran.exit_code,
+        output: ran.output,
+        reason: ran.reason.or_else(|| step.reason.clone()),
+        skipped: ran.skipped,
+        local_adapter: step.adapter.is_local_stand_in(),
+        timeout_seconds: ran.timeout_seconds,
+    });
 }
 
 pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
@@ -312,76 +440,42 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         return Ok(result);
     }
 
-    let mut runner = Runner::new(&directory.join("runner"), &source, tools.platform)?;
     // Steps run in workflow order, as a runner runs them. The stage is how a
     // step is reported, never when it runs: `make test-servers` has to start
     // the servers before the step that reads their environment file.
     let mut stages: BTreeMap<&'static str, Stage> = BTreeMap::new();
     let mut failure: Option<String> = None;
-    for (stage_name, step) in ordered_steps(request) {
-        let started_at = build_machine_core::now();
-        let condition = Condition::parse(step.condition.as_deref())?;
-        let ran = if condition == Condition::Secret {
-            result.limits.push("A GitHub secret or token condition is false in the local runner.".to_owned());
-            let mut ran = Ran::new(Outcome::PassedWithLimits);
-            ran.reason = Some("if condition depends on a secret, which is empty locally".to_owned());
-            ran.skipped = true;
-            ran
-        } else if !condition.runs(failure.is_some()) {
-            let mut ran = Ran::new(Outcome::Skipped);
-            ran.reason = Some(if failure.is_some() {
-                "not run: an earlier step failed and this step's if does not run after a failure".to_owned()
-            } else {
-                "if condition evaluated false locally".to_owned()
-            });
-            ran
-        } else {
-            match execute(stage_name, step, &source, request, &base, tools, &mut runner, &mut result) {
-                Ok(ran) => ran,
-                // An adapter that cannot do its work fails its step, and the
-                // report says why, rather than ending the replay without one.
-                Err(error) => {
-                    let mut ran = Ran::new(Outcome::Failed);
-                    ran.output = Some(format!("{error:#}"));
-                    eprintln!("ERROR: step {} ({}): {error:#}", step.index, step.name);
-                    ran
-                }
+    let mut finished: BTreeMap<&str, JobStatus> = BTreeMap::new();
+    for job in &request.jobs {
+        // A job runs when every job it needs succeeded, as GitHub's default
+        // job condition `success()` reads it.
+        let blocked = job.needs.iter().find(|need| finished.get(need.as_str()) != Some(&JobStatus::Success));
+        if let Some(need) = blocked {
+            let reason = format!("job {} did not run: the job it needs, {need}, did not succeed", job.id);
+            for step in &job.steps {
+                let mut ran = Ran::new(Outcome::Skipped);
+                ran.reason = Some(reason.clone());
+                record(&mut stages, step, ran, build_machine_core::now());
             }
+            continue;
+        }
+        let runner = Runner::new(&directory.join("runner").join(&job.id), &source, tools.platform)?;
+        let status = run_job(job, runner, &source, request, &base, tools, &mut result, &mut stages, &mut failure)?;
+        finished.insert(job.id.as_str(), status);
+    }
+    for (stage, reason) in &request.skips {
+        let present = stages.get(stage.as_str()).is_some_and(|stage| !stage.steps.is_empty());
+        if present {
+            continue;
+        }
+        let Some(stage_name) = build_machine_core::workflow::STAGE_ORDER.iter().find(|name| **name == stage.as_str()) else {
+            continue;
         };
-        if matches!(ran.status, Outcome::Failed | Outcome::Timeout) && failure.is_none() {
-            failure = Some(format!("step {} ({}) {}", step.index, step.name, match (ran.status, ran.exit_code) {
-                (Outcome::Timeout, _) => "timed out".to_owned(),
-                (_, Some(code)) => format!("exited with {code}"),
-                _ => "failed".to_owned(),
-            }));
-        }
-        let stage = stages.entry(stage_name).or_insert_with(|| Stage {
-            status: Outcome::Skipped,
-            started_at: started_at.clone(),
-            finished_at: None,
-            error: None,
-            steps: Vec::new(),
-        });
-        stage.status = worst(stage.status, ran.status);
-        if matches!(ran.status, Outcome::Failed | Outcome::Timeout) && stage.error.is_none() {
-            stage.error = Some(format!("step {} ({}) {}", step.index, step.name, if ran.status == Outcome::Timeout { "timed out" } else { "failed" }));
-        }
-        stage.finished_at = Some(build_machine_core::now());
-        stage.steps.push(ReportStep {
-            index: step.index,
-            name: step.name.clone(),
-            adapter: step.adapter.as_str().to_owned(),
-            status: ran.status,
-            started_at,
-            finished_at: Some(build_machine_core::now()),
-            command: ran.command,
-            exit_code: ran.exit_code,
-            output: ran.output,
-            reason: ran.reason.or_else(|| step.reason.clone()),
-            skipped: ran.skipped,
-            local_adapter: step.adapter.is_local_stand_in(),
-            timeout_seconds: ran.timeout_seconds,
-        });
+        result.limits.push(format!("{stage} skipped: {reason}"));
+        let marker = Step { name: format!("skip {stage}"), adapter: Adapter::Skip, reason: Some(reason.clone()), ..Step::default() };
+        let mut ran = Ran::new(Outcome::PassedWithLimits);
+        ran.reason = Some(reason.clone());
+        record_in(&mut stages, stage_name, &marker, ran, build_machine_core::now());
     }
     for (name, stage) in stages {
         result.stages.insert(name.to_owned(), stage);

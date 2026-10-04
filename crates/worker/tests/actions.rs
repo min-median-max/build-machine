@@ -9,7 +9,6 @@ use build_machine_worker::actions::{
     declared_version, go_mod_version, listed_checksum, php_extensions, php_packages, php_plan, php_version,
     resolve_go, resolve_node, version_spec, GoArchive,
 };
-use std::collections::BTreeMap;
 
 fn step(adapter: Adapter, with: &[(&str, &str)]) -> Step {
     Step {
@@ -17,16 +16,9 @@ fn step(adapter: Adapter, with: &[(&str, &str)]) -> Step {
         position: 1,
         name: "setup".to_owned(),
         adapter,
-        action: None,
-        action_ref: None,
-        run: None,
-        working_directory: None,
-        condition: None,
-        reason: None,
-        env: BTreeMap::new(),
         with: with.iter().map(|(key, value)| ((*key).to_owned(), (*value).to_owned())).collect(),
-        job_env: BTreeMap::new(),
         job_id: "test".to_owned(),
+        ..Step::default()
     }
 }
 

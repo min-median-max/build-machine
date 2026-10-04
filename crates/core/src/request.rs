@@ -4,7 +4,7 @@
 //! this one definition, so a field cannot drift between them.
 
 use crate::source::Snapshot;
-use crate::workflow::Step;
+use crate::workflow::Job;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -46,9 +46,12 @@ pub struct WorkRequest {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<String>,
-    /// Present only for a workflow replay.
+    /// The jobs a workflow replay runs on this platform, in `needs` order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<Job>,
+    /// Stages the workflow documents as deliberately absent, with the reason.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub stages: BTreeMap<String, Vec<Step>>,
+    pub skips: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_signature: Option<String>,
 }

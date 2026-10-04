@@ -401,7 +401,7 @@ jobs:
 /// a step; dropping them would replay a different step.
 #[test]
 fn a_step_key_the_replay_does_not_honour_fails_closed() {
-    for key in ["shell: python", "continue-on-error: true", "timeout-minutes: 5"] {
+    for key in ["shell: python", "continue-on-error: true"] {
         let text = format!(
             "# build-machine: skip build reason=fixture\n# build-machine: skip smoke reason=fixture\nname: ci\non: workflow_dispatch\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make check\n        {key}\n"
         );
@@ -463,11 +463,13 @@ jobs:
 
 #[test]
 fn conditions_follow_the_job_status_as_github_evaluates_them() {
-    use workflow::Condition;
-    let runs = |text: &str, failed: bool| Condition::parse(Some(text)).unwrap().runs(failed);
+    use workflow::{Condition, JobStatus};
+    let runs = |text: &str, failed: bool| {
+        Condition::parse(Some(text)).unwrap().runs(if failed { JobStatus::Failure } else { JobStatus::Success })
+    };
     // No condition is success().
-    assert!(Condition::parse(None).unwrap().runs(false));
-    assert!(!Condition::parse(None).unwrap().runs(true));
+    assert!(Condition::parse(None).unwrap().runs(JobStatus::Success));
+    assert!(!Condition::parse(None).unwrap().runs(JobStatus::Failure));
     // orm's later steps run after a failure, so one run reports every result.
     assert!(runs("${{ !cancelled() }}", true));
     assert!(runs("${{ !cancelled() }}", false));

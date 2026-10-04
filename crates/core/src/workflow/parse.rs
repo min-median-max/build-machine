@@ -11,10 +11,13 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Step {
     pub index: u32,
+    /// The step's `id`, which names its outputs for the steps after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Where the step falls in the whole workflow, jobs in `needs` order. A
     /// replay runs steps in this order; the stage is only how they are reported.
     #[serde(default)]
@@ -33,6 +36,10 @@ pub struct Step {
     pub condition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The step's own `timeout-minutes`. Without it a step is bounded only by
+    /// its job's limit, as on GitHub.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_minutes: Option<u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -42,16 +49,25 @@ pub struct Step {
     pub job_id: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Job {
     pub id: String,
     /// The runner the workflow asks GitHub for. A replay has to run somewhere
     /// that can do what this job was written for.
     pub runs_on: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub needs: Vec<String>,
+    /// The job's `timeout-minutes`, or GitHub's default of 360.
+    pub timeout_minutes: u64,
+    /// The workflow's `env` under the job's own.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
 }
+
+/// GitHub's limit for a job that declares no `timeout-minutes`.
+pub const DEFAULT_JOB_TIMEOUT_MINUTES: u64 = 360;
 
 #[derive(Clone, Debug)]
 pub struct Workflow {
@@ -107,9 +123,50 @@ fn declared_events(document: &Yaml) -> Vec<String> {
 }
 
 /// The step keys a replay honours. Any other key — `shell`,
-/// `continue-on-error`, `timeout-minutes` — changes how GitHub runs the step,
-/// so it fails validation rather than being dropped.
-const STEP_KEYS: [&str; 8] = ["name", "id", "uses", "run", "with", "env", "if", "working-directory"];
+/// `continue-on-error` — changes how GitHub runs the step, so it fails
+/// validation rather than being dropped.
+const STEP_KEYS: [&str; 9] = ["name", "id", "uses", "run", "with", "env", "if", "working-directory", "timeout-minutes"];
+
+/// The job keys a replay implements. `if`, `continue-on-error`, `strategy`,
+/// `defaults`, `outputs`, `environment`, containers, services and reusable
+/// workflows each change which steps GitHub runs or how, so any other key
+/// fails validation.
+const JOB_KEYS: [&str; 6] = ["name", "runs-on", "needs", "env", "steps", "timeout-minutes"];
+
+/// The workflow keys a replay implements. `permissions` and `concurrency`
+/// only govern the GitHub token and overlapping runs, neither of which a
+/// local replay has; `defaults` changes how every step runs and is refused.
+const WORKFLOW_KEYS: [&str; 7] = ["name", "run-name", "on", "env", "jobs", "permissions", "concurrency"];
+
+/// Refuse a key outside `accepted`.
+fn check_keys(value: &Yaml, accepted: &[&str], owner: &str) -> Result<()> {
+    if let Some(map) = as_map(value) {
+        for key in map.keys() {
+            let key = match key {
+                // `on` is a YAML 1.1 boolean.
+                Yaml::Bool(true) => "on".to_owned(),
+                other => text(Some(other)).unwrap_or_default(),
+            };
+            if !accepted.contains(&key.as_str()) {
+                bail!("{owner}의 '{key}'는 아직 지원하지 않아요.");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A `timeout-minutes` value: a whole number of minutes, at least one. An
+/// expression has no value before the run, so it is refused with the rest.
+fn timeout_minutes(value: Option<&Yaml>, owner: &str) -> Result<Option<u64>> {
+    match value {
+        None => Ok(None),
+        Some(Yaml::Number(number)) if number.as_u64().is_some_and(|minutes| minutes > 0) => Ok(number.as_u64()),
+        Some(other) => bail!(
+            "{owner}의 timeout-minutes는 1 이상의 정수여야 해요: {}",
+            serde_yaml_ng::to_string(other).unwrap_or_default().trim()
+        ),
+    }
+}
 
 /// Stage omissions the workflow documents on purpose.
 fn skip_comments(source: &str) -> BTreeMap<String, String> {
@@ -138,15 +195,10 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
     let mut steps = Vec::new();
     for (position, item) in items.iter().enumerate() {
         let index = position as u32 + 1;
-        let Some(map) = as_map(item) else {
+        if as_map(item).is_none() {
             bail!("step {index}가 객체가 아니에요.");
-        };
-        for key in map.keys() {
-            let key = text(Some(key)).unwrap_or_default();
-            if !STEP_KEYS.contains(&key.as_str()) {
-                bail!("job {job_id}의 step {index}에 있는 '{key}'는 아직 지원하지 않아요.");
-            }
         }
+        check_keys(item, &STEP_KEYS, &format!("job {job_id}의 step {index}"))?;
         let uses = text(get(item, "uses"));
         let run = text(get(item, "run"));
         let (adapter, action, action_ref) = match (&uses, &run) {
@@ -175,7 +227,9 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
         Condition::parse(condition.as_deref()).with_context(|| format!("job {job_id}의 step {index} ({name})"))?;
         steps.push(Step {
             index,
+            id: text(get(item, "id")),
             position: 0,
+            timeout_minutes: timeout_minutes(get(item, "timeout-minutes"), &format!("job {job_id}의 step {index}"))?,
             name,
             adapter,
             action,
@@ -232,6 +286,8 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         sorted.sort();
         bail!("이 워크플로는 {event} 이벤트를 지원하지 않아요. 지원 이벤트: {}", sorted.join(", "));
     }
+    check_keys(&document, &WORKFLOW_KEYS, "워크플로")?;
+    let workflow_env = string_map(get(&document, "env"));
     let Some(Yaml::Mapping(job_map)) = get(&document, "jobs") else {
         bail!("워크플로에 jobs가 없어요.");
     };
@@ -247,20 +303,32 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         let Some(runs_on) = text(get(value, "runs-on")) else {
             bail!("job {id}에 runs-on이 없어요.");
         };
-        for unsupported in ["container", "services", "uses", "strategy"] {
-            if get(value, unsupported).is_some() {
-                bail!("job {id}의 container/services/reusable/matrix는 아직 지원하지 않아요.");
-            }
-        }
+        check_keys(value, &JOB_KEYS, &format!("job {id}"))?;
         let needs = match get(value, "needs") {
             None => Vec::new(),
             Some(Yaml::String(value)) => vec![value.clone()],
             Some(Yaml::Sequence(values)) => values.iter().filter_map(|value| text(Some(value))).collect(),
             Some(_) => bail!("job {id}의 needs 형식이 올바르지 않아요."),
         };
-        let env = string_map(get(value, "env"));
+        let mut env = workflow_env.clone();
+        env.extend(string_map(get(value, "env")));
+        let timeout_minutes =
+            timeout_minutes(get(value, "timeout-minutes"), &format!("job {id}"))?.unwrap_or(DEFAULT_JOB_TIMEOUT_MINUTES);
         let steps = parse_steps(&id, &env, get(value, "steps"))?;
-        jobs.push(Job { id, runs_on, needs, env, steps });
+        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps });
+    }
+    // Each platform replays its own jobs, so a job can only wait for a job
+    // that is replayed wherever it is.
+    for job in &jobs {
+        let platform = super::platform_for_runner(&job.runs_on);
+        for need in &job.needs {
+            let needed = jobs.iter().find(|other| &other.id == need).map(|other| super::platform_for_runner(&other.runs_on));
+            if let Some(Some(needed)) = needed {
+                if platform != Some(needed) {
+                    bail!("job {}가 다른 운영체제의 job {need}를 needs로 기다려요. 운영체제마다 따로 재현하므로 지원하지 않아요.", job.id);
+                }
+            }
+        }
     }
     let mut jobs = order_jobs(jobs)?;
     let mut position = 0;

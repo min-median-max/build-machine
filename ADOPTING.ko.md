@@ -110,9 +110,24 @@ Windows에서는 PowerShell로 실행합니다. 단계는 workflow 순서대로 
 `actions/checkout`은 `.git`이 없는 소스 스냅샷으로 대신하며, 1이 아닌
 `fetch-depth`는 제한으로 기록합니다.
 
-**지원하지 않는 것** — 컨테이너, 서비스, 재사용 workflow, `strategy.matrix`,
-어댑터가 없는 action, 단계 키 `shell`, `continue-on-error`, `timeout-minutes`.
-검증에서 실패합니다.
+**Job** — job에는 `name`, `runs-on`, `needs`, `env`, `steps`, `timeout-minutes`를,
+workflow에는 `name`, `run-name`, `on`, `env`, `jobs`, `permissions`, `concurrency`를
+쓸 수 있습니다. workflow `env`는 job과 단계의 `env` 아래에서 모든 단계에 전달됩니다.
+job마다 `$GITHUB_ENV`, `$GITHUB_PATH`, 상태를 따로 두고, job은 `needs`의 모든 job이
+성공했을 때만 실행합니다. 운영체제마다 따로 재현하므로 다른 운영체제의 job을
+`needs`로 기다릴 수 없습니다.
+
+**시간 제한** — job은 자신의 `timeout-minutes`, 선언이 없으면 GitHub의 360분 동안
+실행하고, 단계는 job에 남은 시간 안에서 자신의 `timeout-minutes`만큼 실행합니다. 그
+밖의 제한은 없습니다. 자신의 제한을 넘은 단계는 실패하고, 제한을 넘은 job은 GitHub처럼
+취소되어 그 뒤로는 취소 뒤에도 실행하는 `if:`(`always()`, `cancelled()`)의 단계만
+실행합니다. 단계는 프로세스가 끝나면 끝납니다. 백그라운드 프로세스가 아직 잡고 있는
+출력은 GitHub runner처럼 5초 더 읽고, 그 프로세스는 그대로 둡니다.
+
+**지원하지 않는 것** — 컨테이너, 서비스, 재사용 workflow, `strategy`, 그 밖의 job 키
+(`if`, `continue-on-error`, `defaults`, `outputs`, `environment` 등), workflow
+`defaults`, 어댑터가 없는 action, 단계 키 `shell`, `continue-on-error`. 검증에서
+실패합니다.
 
 **표현식** — `if:`에는 `${{ }}` 안이든 밖이든 `success()`, `failure()`,
 `always()`, `cancelled()`, `true`, `false`, `!`, `&&`, `||`, 괄호를 쓸 수 있습니다.

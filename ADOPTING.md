@@ -117,9 +117,27 @@ Each step can set variables through `$GITHUB_ENV` and add to PATH through
 source snapshot, which carries no `.git`; a `fetch-depth` other than 1 is
 recorded as a limit.
 
-**Not supported** — containers, services, reusable workflows, `strategy.matrix`,
-any action without an adapter, and the step keys `shell`, `continue-on-error`
-and `timeout-minutes`. These fail validation.
+**Jobs** — a job may use `name`, `runs-on`, `needs`, `env`, `steps` and
+`timeout-minutes`; the workflow may use `name`, `run-name`, `on`, `env`,
+`jobs`, `permissions` and `concurrency`. Workflow `env` reaches every step under
+the job's and the step's own. Each job keeps its own `$GITHUB_ENV`,
+`$GITHUB_PATH` and status, and a job runs only when every job it needs
+succeeded. A job cannot need a job of another operating system, because each
+operating system is replayed on its own.
+
+**Time limits** — a job runs for its `timeout-minutes`, or GitHub's 360 minutes
+when it declares none, and a step for its own `timeout-minutes` within what is
+left of its job's. Nothing else bounds a step. A step past its own limit fails;
+a job past its limit is cancelled, as GitHub cancels it, so only steps whose
+`if:` runs after a cancellation (`always()`, `cancelled()`) run after it. A step
+ends when its process exits: output a background process still holds is read
+for five more seconds, as GitHub's runner does, and the process is left
+running.
+
+**Not supported** — containers, services, reusable workflows, `strategy`, any
+other job key (`if`, `continue-on-error`, `defaults`, `outputs`, `environment`,
+…), workflow `defaults`, any action without an adapter, and the step keys
+`shell` and `continue-on-error`. These fail validation.
 
 **Expressions** — an `if:` may use `success()`, `failure()`, `always()`,
 `cancelled()`, `true`, `false`, `!`, `&&`, `||` and parentheses, inside `${{ }}`
