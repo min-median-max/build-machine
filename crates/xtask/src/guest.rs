@@ -14,8 +14,17 @@ use base64::Engine;
 use build_machine_controller::transport::prlctl_path;
 use build_machine_core::config::Machine;
 use build_machine_core::Platform;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
+
+/// How long a guest has to answer a short query such as its home directory.
+/// A guest whose tools do not answer `prlctl exec` stops the build here.
+const QUERY_LIMIT: Duration = Duration::from_secs(60);
+/// How long the guest may take to build the worker.
+const BUILD_LIMIT: Duration = Duration::from_secs(60 * 60);
 
 /// The guest's own view of the share.
 fn share_root(platform: Platform, share: &str) -> String {
@@ -40,7 +49,7 @@ impl Guest {
     /// session, so on a machine that has one this becomes the user directly.
     /// A machine sitting at its login screen has no session to attach to, and
     /// waiting for someone to sign in is not a build step.
-    fn run(&self, arguments: &[&str], echo: bool) -> Result<String> {
+    fn run(&self, arguments: &[&str], echo: bool, limit: Duration) -> Result<String> {
         if echo {
             println!("> prlctl exec {} {}", self.vm, arguments.join(" "));
         }
@@ -54,10 +63,10 @@ impl Guest {
                 command.args(["runuser", "-u", user, "--"]);
             }
         }
-        let output = command
-            .args(arguments)
-            .output()
-            .context("prlctl exec을 실행하지 못했어요.")?;
+        command.args(arguments);
+        let output = bounded_output(command, limit).map_err(|error| {
+            anyhow::anyhow!("{} {}: {error} {}", self.vm, arguments.join(" "), self.state())
+        })?;
         if echo {
             print!("{}", String::from_utf8_lossy(&output.stdout));
         }
@@ -71,13 +80,30 @@ impl Guest {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
+    /// The virtual machine's state and guest tools as `prlctl list -i` reports
+    /// them, for an error about a guest that did not answer.
+    fn state(&self) -> String {
+        match Command::new(&self.prlctl).args(["list", "-i", &self.vm]).output() {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let lines: Vec<&str> = text
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| line.starts_with("State:") || line.starts_with("GuestTools:"))
+                    .collect();
+                format!("({})", lines.join(", "))
+            }
+            Err(error) => format!("(prlctl list -i failed: {error})"),
+        }
+    }
+
     /// The signed-in user's home directory, which is where the build writes.
     fn home(&self) -> Result<String> {
         let raw = match self.platform {
             Platform::Windows => {
-                self.run(&["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$env:USERPROFILE"], false)?
+                self.run(&["powershell.exe", "-NoLogo", "-NoProfile", "-Command", "$env:USERPROFILE"], false, QUERY_LIMIT)?
             }
-            _ => self.run(&["printenv", "HOME"], false)?,
+            _ => self.run(&["printenv", "HOME"], false, QUERY_LIMIT)?,
         };
         let home = raw.trim().to_owned();
         if home.is_empty() {
@@ -134,6 +160,7 @@ pub fn build_worker(root: &Path, machine: &Machine, platform: Platform) -> Resul
             &target_dir,
         ],
         true,
+        BUILD_LIMIT,
     )?;
 
     let output = [target_dir.as_str(), target, "release", produced].join(separator);
@@ -147,8 +174,9 @@ pub fn build_worker(root: &Path, machine: &Machine, platform: Platform) -> Resul
                 &format!("[Convert]::ToBase64String([IO.File]::ReadAllBytes('{output}'))"),
             ],
             false,
+            QUERY_LIMIT,
         )?,
-        _ => guest.run(&["base64", &output], false)?,
+        _ => guest.run(&["base64", &output], false, QUERY_LIMIT)?,
     };
 
     let cleaned: String = encoded.chars().filter(|character| !character.is_whitespace()).collect();
@@ -169,6 +197,53 @@ pub fn build_worker(root: &Path, machine: &Machine, platform: Platform) -> Resul
     Ok(destination)
 }
 
+/// Run `command` and collect its output, ending it when it has not finished
+/// within `limit`. The output is read until both pipes close, which happens
+/// when the process ends, so no timer decides when it is done.
+fn bounded_output(mut command: Command, limit: Duration) -> Result<Output> {
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().with_context(|| format!("{command:?}을 실행하지 못했어요."))?;
+    let (sender, receiver) = mpsc::channel();
+    let mut readers = Vec::new();
+    for (index, mut pipe) in [
+        Box::new(child.stdout.take().context("stdout이 없어요.")?) as Box<dyn Read + Send>,
+        Box::new(child.stderr.take().context("stderr가 없어요.")?) as Box<dyn Read + Send>,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let sender = sender.clone();
+        readers.push(std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = pipe.read_to_end(&mut bytes).map(|_| bytes);
+            // 받는 쪽이 시간을 넘겨 끝났으면 보낼 곳이 없다. 그 경우 오류는 이미 보고됐다.
+            let _ = sender.send((index, result));
+        }));
+    }
+    drop(sender);
+    let deadline = std::time::Instant::now() + limit;
+    let mut collected: [Option<Vec<u8>>; 2] = [None, None];
+    while collected.iter().any(Option::is_none) {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match receiver.recv_timeout(remaining) {
+            Ok((index, result)) => collected[index] = Some(result.context("출력을 읽지 못했어요.")?),
+            Err(_) => {
+                child.kill().context("시간을 넘긴 명령을 끝내지 못했어요.")?;
+                child.wait()?;
+                bail!("{}초 안에 끝나지 않았어요", limit.as_secs_f64());
+            }
+        }
+    }
+    for reader in readers {
+        reader.join().map_err(|_| anyhow::anyhow!("출력을 읽는 스레드가 실패했어요."))?;
+    }
+    let status = child.wait()?;
+    let [Some(stdout), Some(stderr)] = collected else {
+        bail!("명령의 출력을 모두 받지 못했어요.");
+    };
+    Ok(Output { status, stdout, stderr })
+}
+
 #[cfg(unix)]
 fn set_executable(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -179,4 +254,34 @@ fn set_executable(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn set_executable(_path: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bounded_output;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    /// A guest that does not answer `prlctl exec` held `cargo xtask worker`
+    /// for 25 minutes. The command is ended at its limit and the error names
+    /// the limit.
+    #[test]
+    fn a_command_past_its_limit_is_ended_and_named() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 30"]);
+        let started = Instant::now();
+        let error = bounded_output(command, Duration::from_millis(300)).unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+        assert!(error.to_string().contains("0.3"), "{error}");
+    }
+
+    #[test]
+    fn a_command_within_its_limit_returns_its_output() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "printf out; printf err >&2; exit 3"]);
+        let output = bounded_output(command, Duration::from_secs(10)).unwrap();
+        assert_eq!(output.stdout, b"out");
+        assert_eq!(output.stderr, b"err");
+        assert_eq!(output.status.code(), Some(3));
+    }
 }
