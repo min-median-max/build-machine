@@ -81,13 +81,14 @@ pub struct Parallels {
     pub share: String,
     pub worker_source: PathBuf,
     pub prlctl: PathBuf,
+    pub desktop_user: Option<String>,
 }
 
 impl Parallels {
     pub fn new(root: PathBuf, machine: &Machine, platform: Platform, worker_source: PathBuf) -> Result<Parallels> {
         let profile = machine.profile(platform)?;
         let vm = profile.vm.clone().with_context(|| format!("machine.json에 {platform}의 vm이 없어요."))?;
-        Ok(Parallels { root, platform, vm, share: machine.share.clone(), worker_source, prlctl: prlctl_path()? })
+        Ok(Parallels { root, platform, vm, share: machine.share.clone(), worker_source, prlctl: prlctl_path()?, desktop_user: profile.desktop_user.clone() })
     }
 
     /// The share as the guest sees it.
@@ -111,6 +112,19 @@ impl Parallels {
         let placement = self.placement()?;
         let mut command = Command::new(&self.prlctl);
         command.arg("exec").arg(&self.vm);
+        if as_user && self.platform == Platform::Linux {
+            if let Some(user) = &self.desktop_user {
+                let mut worker = vec![placement.worker];
+                worker.extend_from_slice(arguments);
+                worker.extend(["--config".to_owned(), placement.config]);
+                let script = format!("exec {}", worker.iter().map(|value| shell_quote(value)).collect::<Vec<_>>().join(" "));
+                // Parallels authenticates --current-user separately from the
+                // desktop login. Its root channel lets runuser select the
+                // declared Linux account without storing a password.
+                command.arg(format!("runuser -l {} -c {}", shell_quote(user), shell_quote(&script)));
+                return stream_command(command, log);
+            }
+        }
         if as_user {
             command.arg("--current-user");
         }
@@ -158,6 +172,29 @@ impl Parallels {
             self.cli(&["set", &self.vm, "--shf-host", "on"])?;
         }
         Ok(())
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::shell_quote;
+
+    #[test]
+    fn guest_shell_preserves_arguments_without_evaluating_them() {
+        let values = ["", "path with spaces", "owner's file", "$(printf injected)", "a; printf injected", "line\nbreak"];
+        let worker = format!("printf '%s\\0' {}", values.iter().map(|value| shell_quote(value)).collect::<Vec<_>>().join(" "));
+        // runuser -c introduces a second shell interpretation, so verify
+        // both layers, including metacharacters in workflow arguments.
+        let output = std::process::Command::new("sh")
+            .args(["-c", &format!("sh -c {}", shell_quote(&worker))])
+            .output().unwrap();
+        assert!(output.status.success());
+        let expected: Vec<u8> = values.iter().flat_map(|value| value.bytes().chain(std::iter::once(0))).collect();
+        assert_eq!(output.stdout, expected);
     }
 }
 

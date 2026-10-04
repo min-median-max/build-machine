@@ -35,6 +35,8 @@ cargo xtask build --run
 
 Requirements on the Mac: Git, Rust and Parallels with working `prlctl exec` and Parallels Tools. The selected VM must be running with a desktop user signed in. The VM names and tool versions are in [machine.json](machine.json).
 
+See [local environment setup and recovery](ENVIRONMENT.md) for VM accounts, passwordless Linux execution, shared folders, application startup and connection troubleshooting.
+
 The controller selects `windows`, `linux`, `macos`, or all three when `--os` is omitted. Matrix execution is sequential by default; `--execution parallel` runs selected operating systems concurrently while preserving the same stage, command, log, retry, artifact and failure fields. A multi-platform operation captures one source snapshot, waits for every selected platform, records each result and fails overall if any platform fails. `--result-file PATH` writes the structured result for other interfaces. Diagnosis/setup results and timestamps persist in `.state/tool-status.json`; changed machine configuration invalidates those displayed results.
 
 ```sh

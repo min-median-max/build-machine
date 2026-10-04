@@ -9,6 +9,17 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 > edited to describe the Rust implementation, which would make it false. What the
 > Rust rewrite has and has not been shown to do is directly below.
 
+## Local environment recovery — 2026-09-30
+
+See [environment setup and recovery](ENVIRONMENT.md) for the repeatable procedure and GitHub Actions compatibility limits.
+
+- Ubuntu 26.04 ARM64 was newly created with desktop account `parallels` and Parallels Tools 27.0.2 (58673). `prlctl exec --current-user` failed authentication despite a signed-in desktop. The Linux controller now uses the privileged Parallels channel to run the worker through `runuser -l <desktopUser> -c ...`, without storing a password. Windows execution is unchanged.
+- Native macOS GUI was built and opened with its Vite development server; the dashboard rendered. This is a visual startup check, not an automated test of every GUI action.
+- Existing Linux setup run `20260930-183353-394136` succeeded. Subsequent doctor run `20260930-183516-469377` reported `ready=true`, no missing packages and no issues. Actual tools: Node 22.23.2, pnpm 11.24.0, Rust 1.98.1, Go 1.27.1 and Ubuntu Git 2.53.0.
+- `cargo test --locked -p build-machine-core -p build-machine-controller` passed 27 tests, including a new two-shell argument preservation test with spaces, quotes, newlines and shell metacharacters. Controller clippy with all targets and warnings denied passed after installing the missing host clippy component.
+- AIRDATA revision `010c133782119c0ffb4e541c9727b6f4442f79db` (clean), workflow `.github/workflows/release.yml`, passed local workflow validation. Linux replay run `20260930-183524-943541` finished with `passed_with_limits` at 2026-09-30 18:42 KST. Dependency installation, frontend type checks, all 38 AIRDATA Rust tests, frontend production build and ARM64 DEB packaging passed. The workflow explicitly skips smoke; GitHub secrets are empty locally and signing/publication are unverified. DEB size: 5,353,902 bytes; SHA-256: `fb536dd78c6836d72f579fa35f54ea62bff9aa74a1d3f9819f5da519ae27757b`. No system-level DEB installation or AIRDATA launch was performed in this run. Its workflow requests Ubuntu 24.04 ARM64 while the guest is Ubuntu 26.04 ARM64; local success does not establish runner-image equivalence.
+- The first CLI replay omitted `--root`, selected the staged `target/debug` payload and failed the existing-share directory check before running workflow steps. It was corrected with an explicit controller root. A preceding doctor encountered a Parallels session-creation error; later independently invoked setup and doctor completed. Neither failure was hidden or automatically retried.
+
 ## Rust rewrite
 
 The rewrite passes `cargo test --workspace` (40 tests) and `cargo clippy --workspace --all-targets -- -D warnings` on the macOS host, `pnpm --dir gui run build`, and `pnpm --dir gui test` (14 browser tests). The worker compiles with no warnings for `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu` and `aarch64-pc-windows-msvc`.
