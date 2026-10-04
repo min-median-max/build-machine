@@ -217,28 +217,62 @@ fn execute_platform(
     // whether or not the work succeeded.
     let reclaims = platform == Platform::Linux
         && matches!(operation.action, Action::Setup | Action::Build | Action::Release | Action::Ci);
-    if reclaims {
+    let vm = if reclaims {
         let vm = operation.machine.profile(platform)?.vm.clone().context("machine.json에 Linux vm이 없어요.")?;
         for disk in crate::disk::ensure_online_compact(&crate::transport::prlctl_path()?, &vm)? {
             log.note(&format!("DISK {vm} {disk}: online compaction turned on"));
         }
-    }
+        Some(vm)
+    } else {
+        None
+    };
     let arguments = worker_arguments(operation, request.as_deref());
     let output = transport.invoke(&arguments, log);
-    if reclaims {
-        if let Err(error) = transport.invoke_elevated(&["reclaim".to_owned()], log) {
-            // Like retention, a reclaim that fails stays visible in the log
-            // and does not change the result of the work it followed.
-            log.note(&format!("WARNING: could not reclaim the guest's free space: {error:#}"));
+    let result = output.and_then(|output| {
+        if operation.action == Action::Ci {
+            let mut result = parse_report(&output)?;
+            result.require_executed_steps();
+            Ok(result)
+        } else {
+            Ok(PlatformResult::passed(now(), String::new()))
         }
+    });
+    let Some(vm) = vm else { return result };
+    // The space the work freed goes back to the Mac whatever the work's result.
+    match (result, give_back_space(transport.as_ref(), &vm, log)) {
+        (Ok(mut result), Ok(disk)) => {
+            result.disk = disk;
+            Ok(result)
+        }
+        (Ok(mut result), Err(error)) => {
+            result.success = false;
+            result.status = build_machine_core::report::Outcome::Failed;
+            result.error = Some(format!("The work finished, but the machine was not left ready: {error:#}"));
+            Ok(result)
+        }
+        (Err(error), Ok(_)) => Err(error),
+        (Err(error), Err(maintenance)) => Err(error.context(format!("and the machine was not left ready: {maintenance:#}"))),
     }
-    let output = output?;
-    if operation.action == Action::Ci {
-        let mut result = parse_report(&output)?;
-        result.require_executed_steps();
-        return Ok(result);
-    }
-    Ok(PlatformResult::passed(now(), String::new()))
+}
+
+/// Give the space the guest freed back to the Mac and leave the VM ready for
+/// the next work: discard the guest's free blocks, compact the stopped VM's
+/// disks, start it, and check it as the next work will.
+///
+/// The VM is stopped, which is safe because every front end holds the machine
+/// lock for the whole operation and this platform's work has ended.
+fn give_back_space(
+    transport: &dyn Transport,
+    vm: &str,
+    log: &OperationLog,
+) -> Result<Vec<build_machine_core::report::DiskCompaction>> {
+    transport.invoke_elevated(&["reclaim".to_owned()], log).context("the guest did not discard its free blocks")?;
+    let prlctl = crate::transport::prlctl_path()?;
+    let disk = crate::disk::compact_offline(&prlctl, vm, log)?;
+    crate::disk::wait_for_guest(&prlctl, vm, log)?;
+    transport.invoke_elevated(&["setup-system".to_owned()], log).context("setup-system after the VM restarted")?;
+    transport.invoke(&["doctor".to_owned()], log).context("doctor after the VM restarted")?;
+    Ok(disk)
 }
 
 pub fn execute(operation: &Operation) -> Result<RunReport> {

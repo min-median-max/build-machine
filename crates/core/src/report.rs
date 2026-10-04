@@ -125,6 +125,21 @@ pub struct PlatformResult {
     /// What `actions/deploy-pages` would have deployed. Nothing is deployed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deployments: Vec<Deployment>,
+    /// The virtual disks compacted after the work, measured before and after.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disk: Vec<DiskCompaction>,
+}
+
+/// One virtual disk image compacted with its VM stopped. Allocated bytes are
+/// what the image takes on the host; the apparent size is its file length.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskCompaction {
+    pub image: String,
+    pub allocated_before: u64,
+    pub allocated_after: u64,
+    pub apparent_before: u64,
+    pub apparent_after: u64,
 }
 
 /// A deployment a replay recorded and did not make: the job, its
@@ -154,6 +169,7 @@ impl PlatformResult {
             executable: None,
             signing: None,
             deployments: Vec::new(),
+            disk: Vec::new(),
         }
     }
 

@@ -38,6 +38,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - Linux 게스트가 비운 공간을 Mac에 돌려줍니다. 컨트롤러가 setup, build, release, 재현 뒤에 워커의 새 권한 명령 `reclaim`(`fstrim --all`)을 실행하고, VM 디스크 중 Parallels online compaction이 꺼진 것을 켭니다. 이전에는 지운 파일이 VM 이미지에 할당된 채 남았습니다. 이미지의 겉보기 크기는 가장 컸던 크기에 머물고, 줄어드는 것은 할당된 블록(`du -k`)입니다.
 - Parallels가 시작하지 못한 게스트 명령을 다시 시작합니다. Parallels 27의 `prlctl exec`는 열 번에 한 번꼴로 명령이 실행되기 전에 `PrlJob_GetRetCode: Invalid argument` 또는 `PrlJob_GetResult: Invalid argument`만 출력하고 255로 끝납니다(150번 중 그렇게 실패한 18개 명령 모두 실행되지 않았음). 컨트롤러는 그런 명령을 최대 다섯 번까지 시작하고 시도마다 로그에 남기며, 출력을 낸 명령은 다시 실행하지 않고, 끝내 실패하면 Parallels 오류를 밝혀 실패합니다.
 - 워커가 `protocol` 명령을 거부할 때만 controller보다 오래된 워커로 보고합니다. Parallels가 명령을 시작하지 못한 것처럼 그 밖의 이유로 묻지 못한 경우는 그 원인 그대로 보고합니다. 이전에는 전송 오류를 오래된 워커로 보고했습니다.
+- Linux 작업이 끝나면 컨트롤러가 VM을 멈춘 상태로 디스크를 압축합니다. 게스트 `reclaim`, `prlctl stop`, `prl_disk_tool compact`, `prlctl start`, 게스트 대기, 그다음 `setup-system`과 `doctor` 순서입니다. 플랫폼 결과에 이미지마다 전후의 할당 bytes와 겉보기 bytes를 기록합니다. 게스트 TRIM 뒤의 online compaction은 측정한 세 번 중 한 번만 공간을 돌려줬습니다.
 
 ## 0.1.0
 
