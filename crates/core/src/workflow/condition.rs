@@ -27,6 +27,43 @@ pub enum JobStatus {
     Cancelled,
 }
 
+/// The result of a job, as `needs.<job>.result` reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobResult {
+    Success,
+    Failure,
+    Cancelled,
+    Skipped,
+}
+
+impl JobResult {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            JobResult::Success => "success",
+            JobResult::Failure => "failure",
+            JobResult::Cancelled => "cancelled",
+            JobResult::Skipped => "skipped",
+        }
+    }
+}
+
+/// What a condition's status functions read: a step reads its job's status;
+/// a job reads the results of the jobs it needs, directly or through them.
+#[derive(Clone, Copy, Debug)]
+enum Status<'a> {
+    Step(JobStatus),
+    Job(&'a [JobResult]),
+}
+
+/// The values an expression is evaluated against.
+struct Scope<'a> {
+    status: Status<'a>,
+    outputs: &'a Outputs,
+    github: &'a Github,
+    needs: &'a BTreeMap<String, JobResult>,
+}
+
 /// The `github` values a replay has, as a push or a dispatch of that ref
 /// carries them on GitHub.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -68,6 +105,8 @@ pub enum Expression {
     Literal(Value),
     Output(Reference),
     Github(GithubValue),
+    /// `needs.<job>.result`, read in a job's `if`.
+    NeedsResult(String),
     Success,
     Failure,
     Always,
@@ -134,7 +173,7 @@ impl Value {
 impl Expression {
     fn uses_status(&self) -> bool {
         match self {
-            Expression::Literal(_) | Expression::Output(_) | Expression::Github(_) => false,
+            Expression::Literal(_) | Expression::Output(_) | Expression::Github(_) | Expression::NeedsResult(_) => false,
             Expression::Success | Expression::Failure | Expression::Always | Expression::Cancelled => true,
             Expression::Not(inner) => inner.uses_status(),
             Expression::And(left, right)
@@ -157,6 +196,21 @@ impl Expression {
         }
     }
 
+    fn needs(&self, found: &mut Vec<String>) {
+        match self {
+            Expression::NeedsResult(job) => found.push(job.clone()),
+            Expression::Not(inner) => inner.needs(found),
+            Expression::And(left, right)
+            | Expression::Or(left, right)
+            | Expression::Equal(left, right)
+            | Expression::NotEqual(left, right) => {
+                left.needs(found);
+                right.needs(found);
+            }
+            _ => {}
+        }
+    }
+
     fn references(&self, found: &mut Vec<Reference>) {
         match self {
             Expression::Output(reference) => found.push(reference.clone()),
@@ -175,10 +229,17 @@ impl Expression {
     /// `&&` and `||` yield an operand, as GitHub's do, so
     /// `steps.a.outputs.v || 'none'` is a value and not a boolean.
     fn evaluate(&self, status: JobStatus, outputs: &Outputs, github: &Github) -> Value {
+        let needs = BTreeMap::new();
+        self.evaluate_in(&Scope { status: Status::Step(status), outputs, github, needs: &needs })
+    }
+
+    fn evaluate_in(&self, scope: &Scope) -> Value {
+        let github = scope.github;
         match self {
             Expression::Literal(value) => value.clone(),
             Expression::Output(reference) => Value::String(
-                outputs
+                scope
+                    .outputs
                     .get(&reference.step)
                     .and_then(|values| values.get(&reference.output))
                     .cloned()
@@ -190,32 +251,47 @@ impl Expression {
                 GithubValue::Ref => github.reference.clone().map_or(Value::Null, Value::String),
                 GithubValue::RefName => github.reference.as_deref().map_or(Value::Null, |reference| Value::String(ref_name(reference).to_owned())),
             },
-            Expression::Success => Value::Bool(status == JobStatus::Success),
-            Expression::Failure => Value::Bool(status == JobStatus::Failure),
+            Expression::NeedsResult(job) => {
+                scope.needs.get(job).map_or(Value::Null, |result| Value::String(result.as_str().to_owned()))
+            }
+            // A job's success() is every job before it succeeding; failure()
+            // is one of them failing or being cancelled. A skipped job is
+            // neither. A local replay is never cancelled as a whole.
+            Expression::Success => Value::Bool(match scope.status {
+                Status::Step(status) => status == JobStatus::Success,
+                Status::Job(results) => results.iter().all(|result| *result == JobResult::Success),
+            }),
+            Expression::Failure => Value::Bool(match scope.status {
+                Status::Step(status) => status == JobStatus::Failure,
+                Status::Job(results) => {
+                    results.iter().any(|result| matches!(result, JobResult::Failure | JobResult::Cancelled))
+                }
+            }),
             Expression::Always => Value::Bool(true),
-            Expression::Cancelled => Value::Bool(status == JobStatus::Cancelled),
-            Expression::Not(inner) => Value::Bool(!inner.evaluate(status, outputs, github).truthy()),
+            Expression::Cancelled => Value::Bool(match scope.status {
+                Status::Step(status) => status == JobStatus::Cancelled,
+                Status::Job(_) => false,
+            }),
+            Expression::Not(inner) => Value::Bool(!inner.evaluate_in(scope).truthy()),
             Expression::And(left, right) => {
-                let left = left.evaluate(status, outputs, github);
+                let left = left.evaluate_in(scope);
                 if left.truthy() {
-                    right.evaluate(status, outputs, github)
+                    right.evaluate_in(scope)
                 } else {
                     left
                 }
             }
             Expression::Or(left, right) => {
-                let left = left.evaluate(status, outputs, github);
+                let left = left.evaluate_in(scope);
                 if left.truthy() {
                     left
                 } else {
-                    right.evaluate(status, outputs, github)
+                    right.evaluate_in(scope)
                 }
             }
-            Expression::Equal(left, right) => {
-                Value::Bool(left.evaluate(status, outputs, github).equals(&right.evaluate(status, outputs, github)))
-            }
+            Expression::Equal(left, right) => Value::Bool(left.evaluate_in(scope).equals(&right.evaluate_in(scope))),
             Expression::NotEqual(left, right) => {
-                Value::Bool(!left.evaluate(status, outputs, github).equals(&right.evaluate(status, outputs, github)))
+                Value::Bool(!left.evaluate_in(scope).equals(&right.evaluate_in(scope)))
             }
         }
     }
@@ -280,6 +356,36 @@ impl Condition {
         }
     }
 
+    /// Whether a job with this `if` runs, given the results of the jobs before
+    /// it (`ancestors`, the jobs it needs and theirs) and of the jobs it needs
+    /// directly. Without a status function the condition is
+    /// `success() && (…)`, GitHub's default for a job.
+    pub fn job_runs(&self, ancestors: &[JobResult], needs: &BTreeMap<String, JobResult>, github: &Github) -> bool {
+        match self {
+            Condition::Secret => false,
+            Condition::Expression { expression, uses_status } => {
+                let outputs = Outputs::new();
+                let scope = Scope { status: Status::Job(ancestors), outputs: &outputs, github, needs };
+                let value = expression.evaluate_in(&scope).truthy();
+                let succeeded = ancestors.iter().all(|result| *result == JobResult::Success);
+                if *uses_status {
+                    value
+                } else {
+                    succeeded && value
+                }
+            }
+        }
+    }
+
+    /// The jobs whose `needs.<job>.result` the condition reads.
+    pub fn needs(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        if let Condition::Expression { expression, .. } = self {
+            expression.needs(&mut found);
+        }
+        found
+    }
+
     /// Whether the condition reads `github.ref` or `github.ref_name`.
     pub fn reads_ref(&self) -> bool {
         matches!(self, Condition::Expression { expression, .. } if expression.reads_ref())
@@ -321,6 +427,11 @@ impl Template {
                 bail!("Unterminated workflow expression: {text}");
             };
             let expression = Expression::parse(after[..end].trim())?;
+            let mut needs = Vec::new();
+            expression.needs(&mut needs);
+            if let Some(job) = needs.first() {
+                bail!("needs.{job}.result is only read in a job's if: {text}");
+            }
             if expression.uses_status() {
                 bail!("A status function is only available in if: {text}");
             }
@@ -565,6 +676,7 @@ fn context(path: &str) -> Result<Expression> {
         ["github", "sha"] => Expression::Github(GithubValue::Sha),
         ["github", "ref"] => Expression::Github(GithubValue::Ref),
         ["github", "ref_name"] => Expression::Github(GithubValue::RefName),
+        ["needs", job, "result"] if !job.is_empty() => Expression::NeedsResult((*job).to_owned()),
         _ => bail!(
             "Unsupported workflow context: {path}. Only steps.<id>.outputs.<name>, github.event_name, github.sha, github.ref and github.ref_name have a value in a local replay."
         ),

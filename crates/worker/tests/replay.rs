@@ -210,3 +210,43 @@ fn a_job_runs_in_the_runner_s_workspace_layout() {
     let github = runner_work(std::path::Path::new("/home/runner"), "orm").workspace.join(".runtime/servers/mysql-replica/replica.sock");
     assert_eq!(github.to_string_lossy().len() + "parallels".len() - "runner".len(), socket.to_string_lossy().len());
 }
+
+/// A job runs by its `if:` against the results of the jobs before it. orm's
+/// deploy job runs only for a push to main; without an `if` a job runs when
+/// every job before it — the jobs it needs and theirs — succeeded.
+#[test]
+fn a_job_runs_by_its_condition_and_the_jobs_before_it() {
+    use build_machine_core::workflow::{Github, Job, JobResult};
+    use build_machine_worker::ci::job_gate;
+    use std::collections::BTreeMap;
+    let job = |id: &str, needs: &[&str], condition: Option<&str>| Job {
+        id: id.to_owned(),
+        runs_on: "ubuntu-26.04-arm".to_owned(),
+        needs: needs.iter().map(|need| (*need).to_owned()).collect(),
+        timeout_minutes: 360,
+        env: BTreeMap::new(),
+        steps: Vec::new(),
+        environment: None,
+        reads_ref: false,
+        condition: condition.map(str::to_owned),
+    };
+    let jobs = vec![
+        job("build", &[], None),
+        job("test", &["build"], None),
+        job("deploy", &["test"], Some("github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")),
+        job("report", &["test"], Some("always()")),
+    ];
+    let main = Github { event_name: "push".to_owned(), sha: "s".to_owned(), reference: Some("refs/heads/main".to_owned()) };
+    let results = |entries: &[(&str, JobResult)]| -> BTreeMap<String, JobResult> {
+        entries.iter().map(|(id, result)| ((*id).to_owned(), *result)).collect()
+    };
+    let passed = results(&[("build", JobResult::Success), ("test", JobResult::Success)]);
+    assert_eq!(job_gate(&jobs[2], &passed, &jobs, &main).unwrap(), None);
+    let topic = Github { reference: Some("refs/heads/topic".to_owned()), ..main.clone() };
+    assert!(job_gate(&jobs[2], &passed, &jobs, &topic).unwrap().unwrap().contains("if"));
+    // build failed and test was skipped: deploy is skipped; report, always(), runs.
+    let failed = results(&[("build", JobResult::Failure), ("test", JobResult::Skipped)]);
+    assert!(job_gate(&jobs[1], &results(&[("build", JobResult::Failure)]), &jobs, &main).unwrap().is_some());
+    assert!(job_gate(&jobs[2], &failed, &jobs, &main).unwrap().is_some());
+    assert_eq!(job_gate(&jobs[3], &failed, &jobs, &main).unwrap(), None);
+}

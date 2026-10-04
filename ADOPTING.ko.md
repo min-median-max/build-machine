@@ -154,11 +154,17 @@ checkout하게 하는 입력은 검증에서 실패합니다. job이 끝나면 r
 [machine.json](machine.json) `retention`의 byte 상한은 재현이 끝난 뒤뿐 아니라 시작하기
 전에도 적용합니다.
 
-**Job** — job에는 `name`, `runs-on`, `needs`, `env`, `steps`, `timeout-minutes`를,
-workflow에는 `name`, `run-name`, `on`, `env`, `jobs`, `permissions`, `concurrency`를
-쓸 수 있습니다. workflow `env`는 job과 단계의 `env` 아래에서 모든 단계에 전달됩니다.
-job마다 `$GITHUB_ENV`, `$GITHUB_PATH`, 상태를 따로 두고, job은 `needs`의 모든 job이
-성공했을 때만 실행합니다. 운영체제마다 따로 재현하므로 다른 운영체제의 job을
+**Job** — job에는 `name`, `runs-on`, `needs`, `env`, `steps`, `timeout-minutes`,
+`environment`, `if`, `permissions`(재현에는 없는 GitHub token에만 영향)를, workflow에는
+`name`, `run-name`, `on`, `env`, `jobs`, `permissions`, `concurrency`를 쓸 수 있습니다.
+workflow `env`는 job과 단계의 `env` 아래에서 모든 단계에 전달됩니다. job마다
+`$GITHUB_ENV`, `$GITHUB_PATH`, 상태를 따로 둡니다. job은 GitHub처럼 `if:`로 실행 여부를
+정합니다. `success()`는 앞선 모든 job(`needs`의 job과 그 job들의 `needs`)이 성공했을 때,
+`failure()`는 그중 하나가 실패했을 때 참이고, `always()`, `needs`에 있는 job의
+`needs.<job>.result`(`success`, `failure`, `cancelled`, `skipped`), 재현이 가진 `github`
+값을 읽습니다. `if`가 없으면 `success()`입니다. 실행하지 않은 job은 이유와 함께
+skipped로 기록하고, 그 job을 기다리는 job은 `skipped`를 봅니다. job의 `if`에 쓴
+`needs.<job>.outputs`, 단계 출력과 그 밖의 context는 검증에서 실패합니다. 운영체제마다 따로 재현하므로 다른 운영체제의 job을
 `needs`로 기다릴 수 없습니다.
 
 **시간 제한** — job은 자신의 `timeout-minutes`, 선언이 없으면 GitHub의 360분 동안
@@ -169,7 +175,7 @@ job마다 `$GITHUB_ENV`, `$GITHUB_PATH`, 상태를 따로 두고, job은 `needs`
 출력은 GitHub runner처럼 5초 더 읽고, 그 프로세스는 그대로 둡니다.
 
 **지원하지 않는 것** — 컨테이너, 서비스, 재사용 workflow, `strategy`, 그 밖의 job 키
-(`if`, `continue-on-error`, `defaults`, `outputs`, `permissions` 등), workflow
+(`continue-on-error`, `defaults`, `outputs` 등), workflow
 `defaults`, 어댑터가 없는 action, 단계 키 `shell`, `continue-on-error`. 검증에서
 실패합니다.
 

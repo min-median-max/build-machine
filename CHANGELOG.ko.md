@@ -44,6 +44,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - 워커의 보고서를 표준 출력만으로 읽습니다. 이전에는 표준 출력과 표준 오류를 줄 단위로 섞은 것에서 읽어서, 보고서를 쓰는 사이에 쓴 오류 줄이 보고서를 깨뜨렸고 실패한 재현이 결국 단계를 잃었습니다.
 - 컨트롤러는 Mac에 Linux VM을 다시 시작할 공간(VM 메모리에 1024 MB를 더한 여유 공간)이 있을 때만 오프라인 압축을 위해 VM을 멈춥니다. 공간이 없으면 VM을 계속 실행하고, 두 수치를 로그에 남기고, 게스트의 빈 블록만 discard했다고 결과에 기록합니다. 멈췄다가 시작하지 못한 VM은 그대로 보고합니다. 이전에는 Parallels가 디스크 공간 부족으로 시작을 거부해 VM이 멈춘 채 남았습니다.
 - 재현 job은 홈 디렉터리 아래 runner와 같은 배치에서 실행합니다. `GITHUB_WORKSPACE`는 `$HOME/work/<저장소>/<저장소>`, `RUNNER_WORKSPACE`는 `$HOME/work/<저장소>`이고, runner 파일과 `RUNNER_TEMP`는 `$HOME/work/_temp` 아래에 둡니다. 실행 기록과 산출물은 프로젝트 디렉터리에 그대로 둡니다. 워커 상태 디렉터리 아래의 workspace는 약 85자였고, 그 아래의 orm MySQL 소켓이 unix 소켓 경로의 107 byte 제한을 넘었습니다.
+- job의 `if:`와 `permissions`를 받습니다. `if`는 GitHub처럼 읽습니다. 앞선 job들에 대한 상태 함수, `needs.<job>.result`, 재현의 `github` 값을 읽고 기본값은 `success()`입니다. 실행하지 않은 job은 이유와 함께 skipped로 기록합니다. orm의 docs-pages.yml은 deploy job의 `if` 때문에 검증에서 실패했습니다.
 
 ## 0.1.0
 

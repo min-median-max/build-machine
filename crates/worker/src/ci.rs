@@ -659,6 +659,42 @@ pub fn runner_work(home: &Path, repository: &str) -> RunnerWork {
     }
 }
 
+/// Why a job does not run, or `None` when it runs: its `if:` read against
+/// the results of the jobs before it, as GitHub reads a job's condition.
+pub fn job_gate(
+    job: &Job,
+    results: &BTreeMap<String, build_machine_core::workflow::JobResult>,
+    jobs: &[Job],
+    github: &build_machine_core::workflow::Github,
+) -> Result<Option<String>> {
+    use build_machine_core::workflow::JobResult;
+    // The jobs it needs, and theirs.
+    let mut before: Vec<&str> = Vec::new();
+    let mut pending: Vec<&str> = job.needs.iter().map(String::as_str).collect();
+    while let Some(id) = pending.pop() {
+        if before.contains(&id) {
+            continue;
+        }
+        before.push(id);
+        if let Some(needed) = jobs.iter().find(|other| other.id == id) {
+            pending.extend(needed.needs.iter().map(String::as_str));
+        }
+    }
+    let result = |id: &str| results.get(id).copied().unwrap_or(JobResult::Skipped);
+    let ancestors: Vec<JobResult> = before.iter().map(|id| result(id)).collect();
+    let needs: BTreeMap<String, JobResult> = job.needs.iter().map(|id| (id.clone(), result(id))).collect();
+    let condition = Condition::parse(job.condition.as_deref())?;
+    if condition.job_runs(&ancestors, &needs, github) {
+        return Ok(None);
+    }
+    let summary = needs.iter().map(|(id, result)| format!("{id} {}", result.as_str())).collect::<Vec<_>>().join(", ");
+    Ok(Some(match (&job.condition, condition == Condition::Secret) {
+        (Some(_), true) => format!("job {} did not run: its if depends on a secret, which is empty locally", job.id),
+        (Some(text), false) => format!("job {} did not run: its if `{text}` evaluated false (needs: {summary})", job.id),
+        (None, _) => format!("job {} did not run: a job before it did not succeed (needs: {summary})", job.id),
+    }))
+}
+
 pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     tools.setup_system()?;
     tools.setup_user()?;
@@ -700,7 +736,7 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     // the servers before the step that reads their environment file.
     let mut stages: BTreeMap<&'static str, Stage> = BTreeMap::new();
     let mut failure: Option<String> = None;
-    let mut finished: BTreeMap<&str, JobStatus> = BTreeMap::new();
+    let mut finished: BTreeMap<String, build_machine_core::workflow::JobResult> = BTreeMap::new();
     let event = request.snapshot.event.as_deref().context("요청에 workflow event가 없어요.")?;
     let github =
         github_context(&request.jobs, event, &request.snapshot.revision, request.snapshot.checkout_ref.as_deref())?;
@@ -711,11 +747,10 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             .with_context(|| format!("이전 pages 산출물을 지우지 못했어요: {}", pages.display()))?;
     }
     for job in &request.jobs {
-        // A job runs when every job it needs succeeded, as GitHub's default
-        // job condition `success()` reads it.
-        let blocked = job.needs.iter().find(|need| finished.get(need.as_str()) != Some(&JobStatus::Success));
-        if let Some(need) = blocked {
-            let reason = format!("job {} did not run: the job it needs, {need}, did not succeed", job.id);
+        // A job runs by its `if:`, or GitHub's default `success()`, against
+        // the results of the jobs before it.
+        if let Some(reason) = job_gate(job, &finished, &request.jobs, &github)? {
+            finished.insert(job.id.clone(), build_machine_core::workflow::JobResult::Skipped);
             for step in &job.steps {
                 let mut ran = Ran::new(Outcome::Skipped);
                 ran.reason = Some(reason.clone());
@@ -758,7 +793,14 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         runner.set("RUNNER_WORKSPACE", &layout.runner_workspace.to_string_lossy());
         let status =
             run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure, &github, &pages)?;
-        finished.insert(job.id.as_str(), status);
+        finished.insert(
+            job.id.clone(),
+            match status {
+                JobStatus::Success => build_machine_core::workflow::JobResult::Success,
+                JobStatus::Failure => build_machine_core::workflow::JobResult::Failure,
+                JobStatus::Cancelled => build_machine_core::workflow::JobResult::Cancelled,
+            },
+        );
         #[cfg(target_os = "linux")]
         for process in crate::runner::terminate_orphans(&tracking) {
             println!("Terminate orphan process: pid {process}");

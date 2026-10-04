@@ -175,12 +175,19 @@ and the result points to them there. The `retention` byte cap of
 [machine.json](machine.json) is applied before a replay starts as well as after
 it.
 
-**Jobs** — a job may use `name`, `runs-on`, `needs`, `env`, `steps` and
-`timeout-minutes`; the workflow may use `name`, `run-name`, `on`, `env`,
-`jobs`, `permissions` and `concurrency`. Workflow `env` reaches every step under
-the job's and the step's own. Each job keeps its own `$GITHUB_ENV`,
-`$GITHUB_PATH` and status, and a job runs only when every job it needs
-succeeded. A job cannot need a job of another operating system, because each
+**Jobs** — a job may use `name`, `runs-on`, `needs`, `env`, `steps`,
+`timeout-minutes`, `environment`, `if` and `permissions` (which governs only the
+GitHub token a replay does not have); the workflow may use `name`, `run-name`,
+`on`, `env`, `jobs`, `permissions` and `concurrency`. Workflow `env` reaches
+every step under the job's and the step's own. Each job keeps its own
+`$GITHUB_ENV`, `$GITHUB_PATH` and status. A job runs by its `if:` as GitHub reads
+it: `success()` when every job before it (the jobs it needs, and theirs)
+succeeded, `failure()` when one of them failed, `always()`,
+`needs.<job>.result` (`success`, `failure`, `cancelled`, `skipped`) of a job it
+needs, and the `github` values a replay has; without an `if` it is
+`success()`. A job that does not run is recorded as skipped with the reason,
+and the jobs that need it see `skipped`. `needs.<job>.outputs`, step outputs and
+other contexts in a job's `if` fail validation. A job cannot need a job of another operating system, because each
 operating system is replayed on its own.
 
 **Time limits** — a job runs for its `timeout-minutes`, or GitHub's 360 minutes
@@ -193,8 +200,7 @@ for five more seconds, as GitHub's runner does, and the process is left
 running.
 
 **Not supported** — containers, services, reusable workflows, `strategy`, any
-other job key (`if`, `continue-on-error`, `defaults`, `outputs`,
-`permissions`, …), workflow `defaults`, any action without an adapter, and the step keys
+other job key (`continue-on-error`, `defaults`, `outputs`, …), workflow `defaults`, any action without an adapter, and the step keys
 `shell` and `continue-on-error`. These fail validation.
 
 **Expressions** — an `if:` may use `success()`, `failure()`, `always()`,

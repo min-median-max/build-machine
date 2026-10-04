@@ -23,7 +23,6 @@ fn job_with(key: &str) -> String {
 #[test]
 fn a_job_key_the_replay_does_not_implement_fails_closed() {
     for key in [
-        "if: github.ref == 'refs/heads/main'",
         "continue-on-error: true",
         "defaults:\n      run:\n        shell: sh",
         "outputs:\n      version: x",
@@ -36,7 +35,14 @@ fn a_job_key_the_replay_does_not_implement_fails_closed() {
         let name = key.split(':').next().unwrap();
         assert!(format!("{error:#}").contains(&format!("'{name}'")), "{key}: {error:#}");
     }
-    for accepted in ["name: tests", "timeout-minutes: 30", "env:\n      A: b", "environment: production"] {
+    for accepted in [
+        "name: tests",
+        "timeout-minutes: 30",
+        "env:\n      A: b",
+        "environment: production",
+        "if: github.ref == 'refs/heads/main'",
+        "permissions:\n      contents: read",
+    ] {
         load(&job_with(accepted)).unwrap_or_else(|error| panic!("{accepted}: {error:#}"));
     }
 }

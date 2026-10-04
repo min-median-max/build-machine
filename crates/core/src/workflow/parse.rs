@@ -72,6 +72,10 @@ pub struct Job {
     /// name cannot give.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reads_ref: bool,
+    /// The job's `if:`. Without one a job runs when every job before it
+    /// succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
 }
 
 /// A job's deployment environment, given as a name or as `{name, url}`.
@@ -171,7 +175,8 @@ const STEP_KEYS: [&str; 9] = ["name", "id", "uses", "run", "with", "env", "if", 
 /// `outputs`, `permissions`, containers, services and reusable
 /// workflows each change which steps GitHub runs or how, so any other key
 /// fails validation.
-const JOB_KEYS: [&str; 7] = ["name", "runs-on", "needs", "env", "steps", "timeout-minutes", "environment"];
+const JOB_KEYS: [&str; 9] =
+    ["name", "runs-on", "needs", "env", "steps", "timeout-minutes", "environment", "if", "permissions"];
 
 /// The workflow keys a replay implements. `permissions` and `concurrency`
 /// only govern the GitHub token and overlapping runs, neither of which a
@@ -423,6 +428,9 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
         let condition = text(get(item, "if"));
         let parsed = Condition::parse(condition.as_deref()).with_context(|| owner.clone())?;
         check_references(parsed.references(), &defined, &owner)?;
+        if let Some(job) = parsed.needs().first() {
+            bail!("{owner}: needs.{job}.result는 job의 if에서만 읽어요.");
+        }
         reads_ref |= parsed.reads_ref();
         for text in [&run, &text(get(item, "working-directory"))].into_iter().flatten() {
             reads_ref |= check_template(text, &defined, &owner)?;
@@ -538,8 +546,19 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         let timeout_minutes =
             timeout_minutes(get(value, "timeout-minutes"), &format!("job {id}"))?.unwrap_or(DEFAULT_JOB_TIMEOUT_MINUTES);
         let environment = environment(get(value, "environment"), &id)?;
-        let (steps, reads_ref) = parse_steps(&id, &env, get(value, "steps"))?;
-        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps, environment, reads_ref });
+        let (steps, mut reads_ref) = parse_steps(&id, &env, get(value, "steps"))?;
+        // A job's `if` reads the github context and the results of the jobs
+        // it needs; it runs before any step, so no step output exists yet.
+        let condition = text(get(value, "if"));
+        let parsed = Condition::parse(condition.as_deref()).with_context(|| format!("job {id}의 if"))?;
+        if let Some(reference) = parsed.references().first() {
+            bail!("job {id}의 if가 steps.{}.outputs.{}를 읽어요. job의 if에는 step 출력이 없어요.", reference.step, reference.output);
+        }
+        if let Some(job) = parsed.needs().into_iter().find(|job| !needs.contains(job)) {
+            bail!("job {id}의 if가 needs.{job}.result를 읽지만 {job}는 이 job의 needs에 없어요.");
+        }
+        reads_ref |= parsed.reads_ref();
+        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps, environment, reads_ref, condition });
     }
     // Each platform replays its own jobs, so a job can only wait for a job
     // that is replayed wherever it is.
