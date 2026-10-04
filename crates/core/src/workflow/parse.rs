@@ -257,12 +257,14 @@ pub fn checkout_inputs(with: &BTreeMap<String, String>) -> Result<(u32, bool)> {
     Ok((depth, flag("fetch-tags")?))
 }
 
-/// Another repository a checkout step names: `repository`, the `ref` to check
-/// out (its bundle's `HEAD` when absent) and the `path` under
-/// `GITHUB_WORKSPACE` (the workspace itself when absent).
+/// A checkout step that names a `repository` or a `ref`: the repository
+/// (`None` is the workflow's own), the `ref` to check out (the bundle's
+/// `HEAD` of another repository when absent) and the `path` under
+/// `GITHUB_WORKSPACE` (the workspace itself when absent). A `repository`
+/// may be an expression; it is checked once its value is known.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CheckoutTarget {
-    pub repository: String,
+    pub repository: Option<String>,
     pub reference: Option<String>,
     pub path: Option<String>,
 }
@@ -298,20 +300,23 @@ pub fn checkout_path(with: &BTreeMap<String, String>) -> Result<Option<String>> 
 /// refused there rather than ignored.
 pub fn checkout_target(with: &BTreeMap<String, String>) -> Result<Option<CheckoutTarget>> {
     let path = checkout_path(with)?;
-    let Some(repository) = with.get("repository").map(|value| value.trim()) else {
-        if with.contains_key("ref") {
-            bail!("checkout의 ref는 repository와 함께 다른 저장소를 checkout할 때만 지원해요.");
-        }
+    let repository = with.get("repository").map(|value| value.trim().to_owned());
+    let reference = with.get("ref").map(|value| value.trim().to_owned());
+    if repository.is_none() && reference.is_none() {
         return Ok(None);
-    };
+    }
+    if let Some(repository) = repository.as_deref().filter(|value| !value.contains("${{")) {
+        check_repository_name(repository)?;
+    }
+    Ok(Some(CheckoutTarget { repository, reference, path }))
+}
+
+/// Check that a checkout's `repository` is GitHub's `owner/name`.
+pub fn check_repository_name(repository: &str) -> Result<()> {
     if !is_repository_name(repository) {
         bail!("checkout의 repository는 owner/name 형식이어야 해요: {repository}");
     }
-    Ok(Some(CheckoutTarget {
-        repository: repository.to_owned(),
-        reference: with.get("ref").map(|value| value.trim().to_owned()),
-        path,
-    }))
+    Ok(())
 }
 
 /// A value that names a secret or the GitHub token. Neither exists locally:

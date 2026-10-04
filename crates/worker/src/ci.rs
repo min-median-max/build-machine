@@ -124,8 +124,10 @@ fn checkout_other(
     depth: (u32, bool),
     environment: &[(String, String)],
 ) -> Result<String> {
-    let (name, recorded) = find_repository(&request.snapshot.repositories, &target.repository)
-        .with_context(|| format!("요청에 {}의 Git 기록이 없어요.", target.repository))?;
+    let repository = target.repository.as_deref().context("checkout할 저장소 이름이 없어요.")?;
+    build_machine_core::workflow::parse::check_repository_name(repository)?;
+    let (name, recorded) = find_repository(&request.snapshot.repositories, repository)
+        .with_context(|| format!("요청에 {repository}의 Git 기록이 없어요."))?;
     let history = request.repositories.get(name).with_context(|| format!("요청에 {name}의 Git 기록 경로가 없어요."))?;
     let history = Path::new(history);
     if build_machine_core::source::sha256_file(history)? != recorded.sha256 {
@@ -147,12 +149,13 @@ fn checkout_other(
     )
 }
 
-/// `actions/checkout` into the job's empty workspace, or of another
-/// repository into its `path`.
+/// `actions/checkout` into the job's empty workspace, of the workflow's own
+/// repository at a `ref`, or of another repository into its `path`.
 fn checkout_step(step: &Step, workspace: &Path, request: &WorkRequest, environment: &[(String, String)]) -> Result<String> {
     let (fetch_depth, fetch_tags) = build_machine_core::workflow::checkout_inputs(&step.with)?;
-    if let Some(target) = checkout_target(&step.with)? {
-        return checkout_other(&target, workspace, request, (fetch_depth, fetch_tags), environment);
+    let target = checkout_target(&step.with)?;
+    if let Some(target) = target.as_ref().filter(|target| target.repository.is_some()) {
+        return checkout_other(target, workspace, request, (fetch_depth, fetch_tags), environment);
     }
     let history = request.history.as_deref().context("요청에 checkout할 Git 기록이 없어요.")?;
     let history = Path::new(history);
@@ -160,6 +163,22 @@ fn checkout_step(step: &Step, workspace: &Path, request: &WorkRequest, environme
         bail!("Git history checksum mismatch.");
     }
     let mirror = project_root(request)?.join("history.git");
+    // A ref of the own repository is checked out from its committed history,
+    // as GitHub checks out that ref; the working tree is not staged on it.
+    if let Some(target) = target {
+        return crate::checkout::checkout_repository(
+            &crate::checkout::RepositoryCheckout {
+                repository: "this repository",
+                history,
+                mirror: &mirror,
+                directory: &workspace.join(target.path.as_deref().unwrap_or(".")),
+                reference: target.reference.as_deref(),
+                fetch_depth,
+                fetch_tags,
+            },
+            environment,
+        );
+    }
     let directory = workspace.join(checkout_path(&step.with)?.as_deref().unwrap_or("."));
     crate::checkout::checkout(
         &crate::checkout::Checkout {
@@ -317,9 +336,12 @@ fn execute(
             let summary = checkout_step(step, source, request, &environment)?;
             println!("{summary}");
             match checkout_target(&step.with)? {
-                Some(target) => result.limits.push(format!(
-                    "actions/checkout of {} fetches the committed branches and tags of its local clone named in machine.json repositories, not from the GitHub remote; uncommitted changes of that clone are not checked out.",
-                    target.repository
+                Some(CheckoutTarget { repository: Some(repository), .. }) => result.limits.push(format!(
+                    "actions/checkout of {repository} fetches the committed branches and tags of its local clone named in machine.json repositories, not from the GitHub remote; uncommitted changes of that clone are not checked out."
+                )),
+                Some(CheckoutTarget { repository: None, reference, .. }) => result.limits.push(format!(
+                    "actions/checkout of this repository at {} fetches its committed branches and tags through a local mirror, not from the GitHub remote; uncommitted changes are not checked out.",
+                    reference.as_deref().unwrap_or("HEAD")
                 )),
                 None => {
                     result.limits.push(

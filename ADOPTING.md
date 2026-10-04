@@ -171,9 +171,13 @@ places the checkout in a relative directory under the workspace, which must be
 empty or absent; steps without `working-directory` still run in the workspace
 root. `repository` checks out another repository that `machine.json`
 `repositories` maps to a local clone, at its `ref` (a branch, a tag or a commit
-SHA, the clone's `HEAD` when absent), from that clone's committed history.
-`ref` without `repository`, `submodules` and the other inputs that would check
-out something else fail validation. When a job ends, processes that still carry
+SHA, the clone's `HEAD` when absent), from that clone's committed history; a
+`repository` given by an expression, such as
+`${{ github.event.pull_request.head.repo.full_name }}`, is read with the
+replay's `github` values before it is looked up. `ref` without `repository`
+checks out the workflow's own repository at that ref from its committed
+history, without the working tree's changes. `submodules` and the other inputs
+that would check out something else fail validation. When a job ends, processes that still carry
 its `RUNNER_TRACKING_ID` are terminated, as a runner does (Linux), and its
 workspace is removed: the artifacts the result names are moved beside it first
 and the result points to them there. The `retention` byte cap of

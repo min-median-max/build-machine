@@ -151,8 +151,10 @@ mirror를 거쳐 가져옵니다. GitHub remote가 아니라는 점은 제한으
 비어 있거나 없어야 합니다. `working-directory`가 없는 단계는 그대로 workspace 루트에서
 실행합니다. `repository`는 `machine.json`의 `repositories`가 로컬 clone에 대응시킨 다른
 저장소를 그 clone의 commit된 기록에서 `ref`(branch, tag 또는 commit SHA, 없으면 clone의
-`HEAD`)로 checkout합니다. `repository` 없는 `ref`, `submodules`처럼 다른 것을
-checkout하게 하는 입력은 검증에서 실패합니다. job이 끝나면 runner처럼 그 job의
+`HEAD`)로 checkout합니다. `${{ github.event.pull_request.head.repo.full_name }}`처럼 표현식으로
+준 `repository`는 재현의 `github` 값으로 읽은 뒤에 찾습니다. `repository` 없는 `ref`는 workflow
+자신의 저장소를 그 ref로 commit된 기록에서 checkout하며, 작업 트리의 변경은 담지 않습니다.
+`submodules`처럼 다른 것을 checkout하게 하는 입력은 검증에서 실패합니다. job이 끝나면 runner처럼 그 job의
 `RUNNER_TRACKING_ID`를 가진 프로세스를 종료하고(Linux) workspace를 지웁니다. 결과에
 적힌 산출물은 먼저 그 옆으로 옮기고 결과가 옮긴 위치를 가리킵니다.
 [machine.json](machine.json) `retention`의 byte 상한은 재현이 끝난 뒤뿐 아니라 시작하기

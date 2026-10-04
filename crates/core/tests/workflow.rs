@@ -562,12 +562,13 @@ fn a_checkout_path_outside_the_workspace_fails_validation() {
     }
 }
 
-/// Without `repository` the step checks out the replayed revision, so a
-/// `ref` would be dropped; it is refused instead.
+/// Without `repository` a `ref` checks out the workflow's own repository at
+/// that ref, as on GitHub.
 #[test]
-fn a_ref_without_a_repository_fails_validation() {
-    let error = load(&checkout_of("          ref: v0.0.2")).unwrap_err();
-    assert!(format!("{error:#}").contains("repository와 함께"), "{error:#}");
+fn a_ref_without_a_repository_checks_out_the_own_repository() {
+    let parsed = load(&checkout_of("          ref: v0.0.2")).unwrap();
+    let target = workflow::checkout_target(&parsed.jobs[0].steps[2].with).unwrap().unwrap();
+    assert_eq!((target.repository, target.reference.as_deref()), (None, Some("v0.0.2")));
 }
 
 /// core's and the registry's CI check out their own repository into `core/`
@@ -591,14 +592,18 @@ fn a_checkout_ref_without_a_local_value_fails_validation() {
     assert!(format!("{error:#}").contains("Unsupported workflow context: github.actor"), "{error:#}");
 }
 
-/// A repository is `owner/name`; an expression has no value to look up in
-/// `machine.json` before the run.
+/// A repository is `owner/name`. An expression is read with the replay's
+/// `github` values; a step output has no value before the run, so a
+/// repository named by one fails when the replay looks it up.
 #[test]
 fn a_checkout_repository_must_be_owner_and_name() {
-    for repository in ["core", "soksak-app/core/extra", "${{ steps.version.outputs.tag }}/core"] {
+    for repository in ["core", "soksak-app/core/extra"] {
         let error = load(&checkout_of(&format!("          repository: {repository}"))).unwrap_err();
         assert!(format!("{error:#}").contains("owner/name"), "{repository}: {error:#}");
     }
+    let parsed = load(&checkout_of("          repository: ${{ steps.version.outputs.tag }}/core")).unwrap();
+    let error = workflow::checkout_repositories(&parsed, &std::collections::BTreeMap::new(), &workflow::Github::default()).unwrap_err();
+    assert!(format!("{error:#}").contains("owner/name"), "{error:#}");
 }
 
 /// A tag push reads `github.ref_name` in a checkout's `ref`, in `run`, `env`
