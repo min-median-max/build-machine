@@ -63,6 +63,7 @@ fn write_request(
         .map(|(name, recorded)| Ok((name.clone(), transport.locate(Path::new(&recorded.bundle))?)))
         .collect::<Result<_>>()?;
     let request = WorkRequest {
+        protocol: build_machine_core::request::PROTOCOL.to_owned(),
         snapshot: snapshot.clone(),
         archive,
         history,
@@ -160,6 +161,22 @@ fn run_platform(
     PlatformOutcome { result: outcome, log: platform_log }
 }
 
+/// Ask the worker for its protocol before giving it any work. A worker of
+/// another protocol, or one too old to answer, reads the request as some other
+/// shape, so it is refused.
+fn check_protocol(transport: &dyn Transport, platform: Platform, log: &OperationLog) -> Result<()> {
+    let expected = build_machine_core::request::PROTOCOL;
+    let hint = build_machine_core::request::rebuild_hint().replace("<os>", platform.as_str());
+    let reply = transport.invoke(&["protocol".to_owned()], log).with_context(|| {
+        format!("{platform} 워커가 protocol을 알려주지 않았어요. controller의 protocol {expected}보다 오래된 워커예요. {hint}")
+    })?;
+    let reported = reply.lines().rev().map(str::trim).find(|line| !line.is_empty()).unwrap_or("없음");
+    if reported != expected {
+        bail!("{platform} 워커의 protocol {reported}이 controller의 protocol {expected}과 달라요. {hint}");
+    }
+    Ok(())
+}
+
 fn execute_platform(
     operation: &Operation,
     platform: Platform,
@@ -170,6 +187,7 @@ fn execute_platform(
 ) -> Result<PlatformResult> {
     let transport = transport(operation, platform)?;
     transport.prepare()?;
+    check_protocol(transport.as_ref(), platform, log)?;
     // System-wide prerequisites need rights the desktop user does not have, so
     // that step runs on its own before the work the desktop user must do.
     // Each platform receives the jobs its own runner label claims.

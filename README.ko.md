@@ -33,7 +33,7 @@ cd ~/Work/build-machine
 cargo xtask build --run
 ```
 
-`cargo xtask dev`는 프런트엔드와 Rust 앱을 함께 시작하고, `cargo xtask test`는 Rust 테스트·clippy·프런트엔드 빌드·브라우저 테스트를 실행합니다. `cargo xtask worker --os windows linux`는 게스트 워커를 각 VM 안에서 빌드합니다. 태그를 밀지 않고도 세 OS 종단 확인을 할 수 있는 경로입니다.
+`cargo xtask dev`는 프런트엔드와 Rust 앱을 함께 시작하고, `cargo xtask test`는 Rust 테스트·clippy·프런트엔드 빌드·브라우저 테스트를 실행합니다. `cargo xtask worker --os windows linux`는 게스트 워커를 각 VM 안에서 빌드합니다. 태그를 밀지 않고도 세 OS 종단 확인을 할 수 있는 경로입니다. `cargo xtask worker --os macos`는 이 Mac에서 universal macOS 워커를 빌드합니다. controller는 작업 전에 각 워커에 protocol(요청과 결과를 정의하는 `crates/core` 소스의 SHA-256)을 묻고, 워커는 요청의 protocol을 확인합니다. 다른 소스로 빌드한 워커는 두 값을 밝히며 그 플랫폼을 실패시키고, 이 방법으로 다시 빌드해야 합니다.
 
 맥에 필요한 것: Git, Rust, 그리고 `prlctl exec`과 Parallels Tools가 동작하는 Parallels. 선택한 VM은 실행 중이고 데스크톱 사용자가 로그인해 있어야 합니다. VM 이름과 도구 버전은 [machine.json](machine.json)에 있습니다.
 

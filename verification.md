@@ -9,6 +9,15 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 > edited to describe the Rust implementation, which would make it false. What the
 > Rust rewrite has and has not been shown to do is directly below.
 
+## Worker protocol — 2026-10-04
+
+Platform: macOS 26.6.2 arm64 (no VM).
+
+- Cause: `ci run` of the sidecar-files `ci.yml` (run `20261004-164249-644878`) ran `workers/build-machine-worker-macos` built on 2026-09-10. It provisioned tools, ran no workflow step and reported `passed_with_limits` in 21 s; nothing compared the worker with the controller.
+- Red, against B4 (`4258877`): `cargo test -p build-machine-controller --locked --test worker` failed `a_worker_of_another_protocol_fails_the_platform`: a fake macOS worker that prints a successful report with no step for any arguments was run, and the platform result was `success: true`, `status: PassedWithLimits`, `error: None`. `cargo test -p build-machine-core --locked --test request` failed `a_request_of_another_protocol_is_refused`: `WorkRequest::load` accepted a request with `"protocol": "stale"` (`called Result::unwrap_err() on an Ok value`).
+- Green: both pass. The controller's error is `macos 워커의 protocol BUILD_MACHINE_REPORT_END이 controller의 protocol f3de022a2b5074bb과 달라요. 워커를 현재 소스로 다시 빌드해야 해요: cargo xtask worker --os macos`. `cargo test --workspace --locked` passed 129 tests; `cargo clippy --workspace --all-targets --locked -- -D warnings` passed. `ci validate` of the sidecar-files `ci.yml` returned `"status": "valid"`.
+- `cargo xtask worker --os macos` rebuilt `workers/build-machine-worker-macos` (`x86_64 arm64`) after `rustup target add x86_64-apple-darwin`; `build-machine-worker-macos protocol` printed `f3de022a2b5074bb`, the controller's protocol at this commit. The Linux and Windows workers in `workers/` predate this protocol and fail their platform until they are rebuilt in their virtual machines.
+
 ## Pages deployment and job environment — 2026-10-04
 
 Platform: macOS 26.6.2 arm64 (no VM and no `ci run`).

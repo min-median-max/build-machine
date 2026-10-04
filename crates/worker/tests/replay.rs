@@ -47,6 +47,7 @@ jobs:
     .unwrap();
     let parsed = workflow::load(&path, "workflow_dispatch", None).unwrap();
     let request = build_machine_core::request::WorkRequest {
+        protocol: build_machine_core::request::PROTOCOL.to_owned(),
         snapshot: serde_json::from_value(serde_json::json!({
             "revision": "r", "dirty": false, "sourceHash": "h", "fileCount": 0, "sourceMode": "local",
             "projectKey": "orm", "project": "/orm", "archive": ""

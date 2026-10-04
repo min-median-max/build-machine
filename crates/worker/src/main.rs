@@ -25,6 +25,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print the protocol of the requests this worker reads.
+    Protocol,
     /// Report the actual environment and any missing requirements.
     Doctor,
     /// Install system-wide prerequisites. Requires elevation.
@@ -77,8 +79,13 @@ fn main() {
 
 fn execute() -> Result<()> {
     let cli = Cli::parse();
+    if let Command::Protocol = cli.command {
+        println!("{}", build_machine_core::request::PROTOCOL);
+        return Ok(());
+    }
     let tools = Tools::new(machine(&cli)?)?;
     match &cli.command {
+        Command::Protocol => unreachable!("answered above"),
         Command::Doctor => {
             let diagnosis = tools.doctor()?;
             println!("{}", serde_json::to_string_pretty(&diagnosis)?);
@@ -92,9 +99,9 @@ fn execute() -> Result<()> {
             tools.setup_user()?;
         }
         Command::Build { request, run } => {
+            let request = WorkRequest::load(request)?;
             tools.setup_system()?;
             tools.setup_user()?;
-            let request = WorkRequest::load(request)?;
             let receipt = build::build(&request, &tools, false)?;
             println!("{}", serde_json::to_string_pretty(&receipt)?);
             if *run {
@@ -102,9 +109,9 @@ fn execute() -> Result<()> {
             }
         }
         Command::Release { request } => {
+            let request = WorkRequest::load(request)?;
             tools.setup_system()?;
             tools.setup_user()?;
-            let request = WorkRequest::load(request)?;
             let receipt = build::build(&request, &tools, true)?;
             println!("{}", serde_json::to_string_pretty(&receipt)?);
         }

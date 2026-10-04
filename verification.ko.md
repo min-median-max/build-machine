@@ -8,6 +8,15 @@
 > 그 실행들의 기록으로 남겨 두며, Rust 구현을 설명하도록 고쳐 쓰지 않습니다. 그렇게 하면
 > 기록이 거짓이 됩니다. Rust 재작성이 무엇을 보였고 무엇을 보이지 않았는지는 바로 아래에 있습니다.
 
+## 워커 protocol — 2026-10-04
+
+플랫폼: macOS 26.6.2 arm64 (VM 없음).
+
+- 원인: sidecar-files `ci.yml`의 `ci run`(run `20261004-164249-644878`)이 2026-09-10에 빌드한 `workers/build-machine-worker-macos`를 실행했습니다. 도구를 준비하고 workflow 단계를 하나도 실행하지 않은 채 21초 만에 `passed_with_limits`를 보고했으며, 워커와 controller를 비교하는 곳이 없었습니다.
+- Red, B4(`4258877`)에서: `cargo test -p build-machine-controller --locked --test worker`의 `a_worker_of_another_protocol_fails_the_platform`이 실패했습니다: 어떤 인자에도 단계 없는 성공 결과를 내는 가짜 macOS 워커가 실행됐고 플랫폼 결과는 `success: true`, `status: PassedWithLimits`, `error: None`이었습니다. `cargo test -p build-machine-core --locked --test request`의 `a_request_of_another_protocol_is_refused`가 실패했습니다: `WorkRequest::load`가 `"protocol": "stale"`인 요청을 받았습니다(`called Result::unwrap_err() on an Ok value`).
+- Green: 두 test 모두 통과합니다. controller의 오류는 `macos 워커의 protocol BUILD_MACHINE_REPORT_END이 controller의 protocol f3de022a2b5074bb과 달라요. 워커를 현재 소스로 다시 빌드해야 해요: cargo xtask worker --os macos`입니다. `cargo test --workspace --locked`가 129건을 통과했고 `cargo clippy --workspace --all-targets --locked -- -D warnings`가 통과했습니다. sidecar-files `ci.yml`의 `ci validate`는 `"status": "valid"`를 반환했습니다.
+- `rustup target add x86_64-apple-darwin` 뒤 `cargo xtask worker --os macos`로 `workers/build-machine-worker-macos`(`x86_64 arm64`)를 다시 빌드했습니다. `build-machine-worker-macos protocol`은 이 commit의 controller protocol인 `f3de022a2b5074bb`를 출력했습니다. `workers/`의 Linux·Windows 워커는 이 protocol 이전 것이므로 각 VM에서 다시 빌드하기 전까지 그 플랫폼을 실패시킵니다.
+
 ## Pages 배포와 job environment — 2026-10-04
 
 플랫폼: macOS 26.6.2 arm64 (VM과 `ci run`은 실행하지 않음).

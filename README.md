@@ -33,7 +33,7 @@ cd ~/Work/build-machine
 cargo xtask build --run
 ```
 
-`cargo xtask dev` starts the frontend and the Rust application together; `cargo xtask test` runs the Rust tests, clippy, the frontend build and the browser tests. `cargo xtask worker --os windows linux` builds the guest workers inside their virtual machines, which is how an end-to-end check runs without waiting for a tagged release.
+`cargo xtask dev` starts the frontend and the Rust application together; `cargo xtask test` runs the Rust tests, clippy, the frontend build and the browser tests. `cargo xtask worker --os windows linux` builds the guest workers inside their virtual machines, which is how an end-to-end check runs without waiting for a tagged release; `cargo xtask worker --os macos` builds the universal macOS worker on this Mac. Before any work the controller asks each worker for its protocol, the SHA-256 of `crates/core`'s sources that define the request and report, and the worker checks the request's: a worker built from other sources fails the platform with both values and has to be rebuilt this way.
 
 Requirements on the Mac: Git, Rust and Parallels with working `prlctl exec` and Parallels Tools. The selected VM must be running with a desktop user signed in. The VM names and tool versions are in [machine.json](machine.json).
 
