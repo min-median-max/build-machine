@@ -177,7 +177,12 @@ step of the same job reads them as `${{ steps.<id>.outputs.<name> }}` in its
 `if:`, `run:`, `env`, `working-directory` and the `with` inputs its adapter
 reads. Validation checks that the step exists earlier in the job; the value is
 filled in just before the step runs, and an output the step did not write is
-empty, as on GitHub. An expression that reads any other context fails
+empty, as on GitHub. The same places read `github.event_name` (the replay's
+event), `github.sha` (the replayed revision), and `github.ref` and
+`github.ref_name` (the branch or tag the replay checks out: the `--ref` branch
+or tag, or the working tree's current branch). A replay of a commit that no
+branch or tag names refuses a workflow that reads `github.ref` or
+`github.ref_name`. An expression that reads any other context fails
 validation. A condition that
 depends on a secret is treated as false and recorded as a limit, so a signing
 step is skipped rather than half-attempted.

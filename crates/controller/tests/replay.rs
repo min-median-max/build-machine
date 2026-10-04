@@ -128,3 +128,30 @@ fn a_repository_the_machine_does_not_map_fails_validation() {
     let message = format!("{error:#}");
     assert!(message.contains("example/core") && message.contains("machine.json repositories"), "{message}");
 }
+
+/// The workflow's `github.ref_name` is the tag a replay checks out, so a
+/// replay of a commit no branch or tag names cannot give it a value.
+#[test]
+fn a_replay_of_a_commit_without_a_ref_name_is_refused_when_the_workflow_reads_one() {
+    let fixture = fixture();
+    let workflow = WORKFLOW.replace("ref: v0.0.2", "ref: ${{ github.ref_name }}");
+    std::fs::write(fixture.project.join(".github/workflows/release.yml"), workflow).unwrap();
+    git(&fixture.project, &["commit", "-qam", "ci: Read the ref name"]);
+    git(&fixture.project, &["tag", "v0.0.2"]);
+    let machine = || machine(serde_json::json!({ "example/core": fixture.core.to_string_lossy() }));
+    let state = fixture.base.join("state");
+
+    let mut tag = operation(&fixture.base, machine(), &fixture.project);
+    tag.reference = Some("v0.0.2".to_owned());
+    let replay = snapshot::for_replay(&tag, &state).unwrap();
+    assert_eq!(replay.snapshot.checkout_ref.as_deref(), Some("refs/tags/v0.0.2"));
+
+    // The working tree is on main.
+    snapshot::for_replay(&operation(&fixture.base, machine(), &fixture.project), &state).unwrap();
+
+    let mut commit = operation(&fixture.base, machine(), &fixture.project);
+    commit.reference = Some(git(&fixture.project, &["rev-parse", "HEAD"]));
+    let error = snapshot::for_replay(&commit, &state).err().expect("a commit has no ref name");
+    let message = format!("{error:#}");
+    assert!(message.contains("github.ref") && message.contains("branch나 tag"), "{message}");
+}

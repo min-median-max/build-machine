@@ -467,11 +467,11 @@ fn conditions_follow_the_job_status_as_github_evaluates_them() {
     let runs = |text: &str, failed: bool| {
         Condition::parse(Some(text))
             .unwrap()
-            .runs(if failed { JobStatus::Failure } else { JobStatus::Success }, &Default::default())
+            .runs(if failed { JobStatus::Failure } else { JobStatus::Success }, &Default::default(), &Default::default())
     };
     // No condition is success().
-    assert!(Condition::parse(None).unwrap().runs(JobStatus::Success, &Default::default()));
-    assert!(!Condition::parse(None).unwrap().runs(JobStatus::Failure, &Default::default()));
+    assert!(Condition::parse(None).unwrap().runs(JobStatus::Success, &Default::default(), &Default::default()));
+    assert!(!Condition::parse(None).unwrap().runs(JobStatus::Failure, &Default::default(), &Default::default()));
     // orm's later steps run after a failure, so one run reports every result.
     assert!(runs("${{ !cancelled() }}", true));
     assert!(runs("${{ !cancelled() }}", false));
@@ -485,7 +485,7 @@ fn conditions_follow_the_job_status_as_github_evaluates_them() {
     assert!(runs("success() || failure()", true));
     assert!(!runs("!(always())", false));
     assert_eq!(Condition::parse(Some("${{ secrets.TOKEN != '' }}")).unwrap(), Condition::Secret);
-    for unknown in ["github.ref == 'refs/heads/main'", "hashFiles('x')", "steps.a.outputs", "(always()"] {
+    for unknown in ["github.actor == 'octocat'", "hashFiles('x')", "steps.a.outputs", "(always()"] {
         assert!(Condition::parse(Some(unknown)).is_err(), "{unknown}");
     }
 }
@@ -503,11 +503,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - run: make check
-        if: github.event_name == 'push'
+        if: github.event.pull_request.merged == true
 "#,
     )
     .unwrap_err();
-    assert!(format!("{error:#}").contains("github"), "{error:#}");
+    assert!(format!("{error:#}").contains("github.event.pull_request.merged"), "{error:#}");
 }
 
 /// A checkout step with `repository` names a workflow of `steps` around it:
@@ -547,7 +547,7 @@ fn a_checkout_of_another_repository_is_read_with_its_ref_and_path() {
     assert_eq!(step.with["path"], "core");
     let mut outputs = workflow::Outputs::new();
     outputs.insert("version".to_owned(), [("tag".to_owned(), "v0.0.2".to_owned())].into_iter().collect());
-    assert_eq!(step.resolve(&outputs).unwrap().with["ref"], "v0.0.2");
+    assert_eq!(step.resolve(&outputs, &Default::default()).unwrap().with["ref"], "v0.0.2");
 }
 
 /// `path` places the other repository inside the workspace; a path that
@@ -575,8 +575,8 @@ fn ref_and_path_without_a_repository_fail_validation() {
 #[test]
 fn a_checkout_ref_without_a_local_value_fails_validation() {
     let error =
-        load(&checkout_of("          repository: soksak-app/core\n          ref: ${{ github.sha }}")).unwrap_err();
-    assert!(format!("{error:#}").contains("Unsupported workflow context: github.sha"), "{error:#}");
+        load(&checkout_of("          repository: soksak-app/core\n          ref: ${{ github.actor }}")).unwrap_err();
+    assert!(format!("{error:#}").contains("Unsupported workflow context: github.actor"), "{error:#}");
 }
 
 /// A repository is `owner/name`; an expression has no value to look up in
@@ -586,5 +586,48 @@ fn a_checkout_repository_must_be_owner_and_name() {
     for repository in ["core", "soksak-app/core/extra", "${{ steps.version.outputs.tag }}/core"] {
         let error = load(&checkout_of(&format!("          repository: {repository}"))).unwrap_err();
         assert!(format!("{error:#}").contains("owner/name"), "{repository}: {error:#}");
+    }
+}
+
+/// A tag push reads `github.ref_name` in a checkout's `ref`, in `run`, `env`
+/// and `if`; validation accepts the four `github` values a replay has.
+#[test]
+fn the_github_values_of_a_push_pass_validation() {
+    let (_directory, path) = write(
+        r#"# build-machine: skip build reason=fixture
+# build-machine: skip smoke reason=fixture
+name: release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: soksak-app/core
+          ref: ${{ github.ref_name }}
+          path: core
+      - name: make check
+        if: github.event_name == 'push' && github.ref != ''
+        env:
+          SHA: ${{ github.sha }}
+        run: echo ${{ github.ref_name }} && make check
+"#,
+    );
+    let parsed = workflow::load(&path, "push", None).unwrap();
+    assert_eq!(parsed.jobs[0].steps[1].with["ref"], "${{ github.ref_name }}");
+}
+
+/// Only `event_name`, `sha`, `ref` and `ref_name` have a value; any other
+/// `github` name fails validation as before.
+#[test]
+fn any_other_github_value_still_fails_validation() {
+    for name in ["actor", "repository", "run_id", "event.head_commit.message"] {
+        let error = load(&checkout_of(&format!("          repository: soksak-app/core\n          ref: ${{{{ github.{name} }}}}")))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains(&format!("Unsupported workflow context: github.{name}")), "{name}: {error:#}");
     }
 }

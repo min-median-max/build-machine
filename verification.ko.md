@@ -8,6 +8,15 @@
 > 그 실행들의 기록으로 남겨 두며, Rust 구현을 설명하도록 고쳐 쓰지 않습니다. 그렇게 하면
 > 기록이 거짓이 됩니다. Rust 재작성이 무엇을 보였고 무엇을 보이지 않았는지는 바로 아래에 있습니다.
 
+## github context — 2026-10-04
+
+플랫폼: macOS 26.6.2 arm64 (VM과 `ci run`은 실행하지 않음).
+
+- Red, B1 구현(`b74e9ae`)에서: `cargo test -p build-machine-core --locked --test workflow`가 26건 중 1건 실패했습니다: `the_github_values_of_a_push_pass_validation`이 `called Result::unwrap() on an Err value: job release의 step 2 (actions/checkout@v4)의 with ref: Unsupported workflow context: github.ref_name. …`로 실패했습니다. `cargo test -p build-machine-controller --locked --test replay`는 3건 중 1건, `a_replay_of_a_commit_without_a_ref_name_is_refused_when_the_workflow_reads_one`이 같은 오류로 실패했습니다. `crates/core/tests/expression.rs`는 컴파일되지 않았습니다: `error[E0432]: unresolved import build_machine_core::workflow::Github`, `error[E0425]: cannot find function github_context in module workflow`, `error[E0061]: this method takes 1 argument but 2 arguments were supplied`(`Template::render`). `any_other_github_value_still_fails_validation`은 변경 전후 모두 통과했으며, 계속 지원하지 않는 이름을 지킵니다.
+- 값이 없는 context의 예로 `github.ref`, `github.ref_name`, `github.event_name`, `github.sha`를 쓰던 기존 test는 이 변경으로 네 이름에 값이 생겼으므로 `github.actor`, `github.repository`, `github.event.pull_request.merged`를 씁니다.
+- Green: core expression 6/6, core workflow 26/26, controller replay 3/3. `cargo test --workspace --locked`가 119건을 통과했고 `cargo clippy --workspace --all-targets --locked -- -D warnings`가 통과했습니다.
+- `build-machine ci validate /Users/maxkwon/Projects/soksak/sidecars/files --workflow .github/workflows/release.yml --event push --os macos`(sidecar-files `3c5863aefb8a161832542faa9b0d29af65a40fb8`, dirty, `refs/heads/main`)는 `"status": "valid"`, stage build 2, release 1, setup 3, smoke 1, test 1, platform `macos`, repositories `soksak-app/core`를 반환했습니다. `--ref`가 없으면 `github.ref_name`은 `main`이므로 실행은 `soksak-app/core`를 `main`에서 checkout합니다. 릴리스 리허설은 `--ref <tag>`를 넘깁니다.
+
 ## 다른 저장소 checkout — 2026-10-04
 
 플랫폼: macOS 26.6.2 arm64 (호스트의 controller와 macOS worker 코드, VM과 `ci run`은 실행하지 않음).

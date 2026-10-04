@@ -14,7 +14,8 @@ use anyhow::{bail, Result};
 use build_machine_core::report::{Artifact, Outcome, PlatformResult, Stage, Step as ReportStep};
 use build_machine_core::request::WorkRequest;
 use build_machine_core::workflow::{
-    checkout_target, find_repository, names_secret, stage_of, Adapter, CheckoutTarget, Condition, Job, JobStatus, Step,
+    checkout_target, find_repository, github_context, names_secret, ref_name, stage_of, Adapter, CheckoutTarget, Condition,
+    Github, Job, JobStatus, Step,
 };
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -369,11 +370,8 @@ fn runner_context(request: &WorkRequest, job: &Job, tracking: &str) -> Vec<(&'st
     }
     if let Some(reference) = &request.snapshot.checkout_ref {
         context.push(("GITHUB_REF", reference.clone()));
-        let (kind, name) = match reference.strip_prefix("refs/heads/") {
-            Some(branch) => ("branch", branch),
-            None => ("tag", reference.trim_start_matches("refs/tags/")),
-        };
-        context.push(("GITHUB_REF_NAME", name.to_owned()));
+        let kind = if reference.starts_with("refs/heads/") { "branch" } else { "tag" };
+        context.push(("GITHUB_REF_NAME", ref_name(reference).to_owned()));
         context.push(("GITHUB_REF_TYPE", kind.to_owned()));
     }
     context
@@ -391,6 +389,7 @@ fn run_job(
     result: &mut PlatformResult,
     stages: &mut BTreeMap<&'static str, Stage>,
     failure: &mut Option<String>,
+    github: &Github,
 ) -> Result<JobStatus> {
     let job_limit = Duration::from_secs(job.timeout_minutes * 60);
     let started = Instant::now();
@@ -404,7 +403,7 @@ fn run_job(
             ran.reason = Some("if condition depends on a secret, which is empty locally".to_owned());
             ran.skipped = true;
             ran
-        } else if !condition.runs(status, runner.outputs()) {
+        } else if !condition.runs(status, runner.outputs(), github) {
             let mut ran = Ran::new(Outcome::Skipped);
             ran.reason = Some(match status {
                 JobStatus::Success => "if condition evaluated false locally".to_owned(),
@@ -430,7 +429,7 @@ fn run_job(
             // A step's expressions take the outputs of the steps before it,
             // just before it runs.
             let ran = step
-                .resolve(runner.outputs())
+                .resolve(runner.outputs(), github)
                 .and_then(|resolved| execute(&resolved, limit, source, request, base, tools, &mut runner, result));
             let mut ran = match ran {
                 Ok(ran) => ran,
@@ -550,6 +549,9 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     let mut stages: BTreeMap<&'static str, Stage> = BTreeMap::new();
     let mut failure: Option<String> = None;
     let mut finished: BTreeMap<&str, JobStatus> = BTreeMap::new();
+    let event = request.snapshot.event.as_deref().context("요청에 workflow event가 없어요.")?;
+    let github =
+        github_context(&request.jobs, event, &request.snapshot.revision, request.snapshot.checkout_ref.as_deref())?;
     for job in &request.jobs {
         // A job runs when every job it needs succeeded, as GitHub's default
         // job condition `success()` reads it.
@@ -586,7 +588,8 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         for (key, value) in runner_context(request, job, &tracking) {
             runner.set(key, &value);
         }
-        let status = run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure)?;
+        let status =
+            run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure, &github)?;
         finished.insert(job.id.as_str(), status);
         #[cfg(target_os = "linux")]
         for process in crate::runner::terminate_orphans(&tracking) {

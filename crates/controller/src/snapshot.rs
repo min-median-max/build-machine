@@ -153,6 +153,8 @@ pub fn for_replay(operation: &Operation, state: &Path) -> Result<Replay> {
     snapshot.history = Some(bundle.to_string_lossy().into_owned());
     snapshot.history_sha256 = Some(history.sha256);
     snapshot.checkout_ref = history.reference;
+    // The workflow's github.ref is the ref the checkout takes.
+    workflow::github_context(&selected.jobs, &event, &snapshot.revision, snapshot.checkout_ref.as_deref())?;
     // Each other repository a checkout step names is fetched from its local
     // clone's committed history, bundled the same way beside the project's.
     for (name, clone) in workflow::checkout_repositories(&selected, &operation.machine.repositories)? {

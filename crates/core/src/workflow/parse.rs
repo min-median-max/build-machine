@@ -6,7 +6,7 @@
 //! changed into something the machine can run.
 
 use super::adapter::Adapter;
-use super::condition::{Condition, Outputs, Reference, Template};
+use super::condition::{Condition, Github, Outputs, Reference, Template};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -64,6 +64,11 @@ pub struct Job {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
+    /// Whether an expression of the job reads `github.ref` or
+    /// `github.ref_name`, which a replay of a commit without a branch or tag
+    /// name cannot give.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reads_ref: bool,
 }
 
 /// GitHub's limit for a job that declares no `timeout-minutes`.
@@ -289,18 +294,21 @@ fn check_references(references: Vec<Reference>, defined: &[String], owner: &str)
     Ok(())
 }
 
-fn check_template(text: &str, defined: &[String], owner: &str) -> Result<()> {
+/// Check a template and return whether it reads `github.ref` or
+/// `github.ref_name`.
+fn check_template(text: &str, defined: &[String], owner: &str) -> Result<bool> {
     let template = Template::parse(text).with_context(|| owner.to_owned())?;
-    check_references(template.references(), defined, owner)
+    check_references(template.references(), defined, owner)?;
+    Ok(template.reads_ref())
 }
 
 impl Step {
-    /// The step with the outputs of the steps before it in place, as GitHub
-    /// evaluates a step's expressions just before it runs. Secret values are
-    /// left for the runner to empty; inputs the adapter does not read are left
-    /// as written.
-    pub fn resolve(&self, outputs: &Outputs) -> Result<Step> {
-        let render = |text: &str| -> Result<String> { Ok(Template::parse(text)?.render(outputs)) };
+    /// The step with the outputs of the steps before it and the `github`
+    /// values in place, as GitHub evaluates a step's expressions just before
+    /// it runs. Secret values are left for the runner to empty; inputs the
+    /// adapter does not read are left as written.
+    pub fn resolve(&self, outputs: &Outputs, github: &Github) -> Result<Step> {
+        let render = |text: &str| -> Result<String> { Ok(Template::parse(text)?.render(outputs, github)) };
         let mut step = self.clone();
         step.run = self.run.as_deref().map(render).transpose()?;
         step.working_directory = self.working_directory.as_deref().map(render).transpose()?;
@@ -318,7 +326,9 @@ impl Step {
     }
 }
 
-fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&Yaml>) -> Result<Vec<Step>> {
+/// The job's steps, and whether any of their expressions or the job's `env`
+/// reads `github.ref` or `github.ref_name`.
+fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&Yaml>) -> Result<(Vec<Step>, bool)> {
     let Some(Yaml::Sequence(items)) = value else {
         bail!("각 job에는 하나 이상의 steps가 필요해요.");
     };
@@ -328,9 +338,10 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
     let mut steps = Vec::new();
     // The ids of the earlier `run` steps, whose outputs later steps may read.
     let mut defined: Vec<String> = Vec::new();
+    let mut reads_ref = false;
     for (key, value) in job_env {
         if !names_secret(value) {
-            check_template(value, &[], &format!("job {job_id}의 env {key}"))?;
+            reads_ref |= check_template(value, &[], &format!("job {job_id}의 env {key}"))?;
         }
     }
     for (position, item) in items.iter().enumerate() {
@@ -371,18 +382,19 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
         let condition = text(get(item, "if"));
         let parsed = Condition::parse(condition.as_deref()).with_context(|| owner.clone())?;
         check_references(parsed.references(), &defined, &owner)?;
+        reads_ref |= parsed.reads_ref();
         for text in [&run, &text(get(item, "working-directory"))].into_iter().flatten() {
-            check_template(text, &defined, &owner)?;
+            reads_ref |= check_template(text, &defined, &owner)?;
         }
         let env = string_map(get(item, "env"));
         for (key, value) in &env {
             if !names_secret(value) {
-                check_template(value, &defined, &format!("{owner}의 env {key}"))?;
+                reads_ref |= check_template(value, &defined, &format!("{owner}의 env {key}"))?;
             }
         }
         for (key, value) in &with {
             if reads_input(adapter, key) {
-                check_template(value, &defined, &format!("{owner}의 with {key}"))?;
+                reads_ref |= check_template(value, &defined, &format!("{owner}의 with {key}"))?;
             }
         }
         let id = text(get(item, "id"));
@@ -414,7 +426,7 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
             job_id: job_id.to_owned(),
         });
     }
-    Ok(steps)
+    Ok((steps, reads_ref))
 }
 
 fn order_jobs(mut jobs: Vec<Job>) -> Result<Vec<Job>> {
@@ -484,8 +496,8 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         env.extend(string_map(get(value, "env")));
         let timeout_minutes =
             timeout_minutes(get(value, "timeout-minutes"), &format!("job {id}"))?.unwrap_or(DEFAULT_JOB_TIMEOUT_MINUTES);
-        let steps = parse_steps(&id, &env, get(value, "steps"))?;
-        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps });
+        let (steps, reads_ref) = parse_steps(&id, &env, get(value, "steps"))?;
+        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps, reads_ref });
     }
     // Each platform replays its own jobs, so a job can only wait for a job
     // that is replayed wherever it is.

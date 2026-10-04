@@ -9,6 +9,15 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 > edited to describe the Rust implementation, which would make it false. What the
 > Rust rewrite has and has not been shown to do is directly below.
 
+## The github context — 2026-10-04
+
+Platform: macOS 26.6.2 arm64 (no VM and no `ci run`).
+
+- Red, against the B1 implementation (`b74e9ae`): `cargo test -p build-machine-core --locked --test workflow` failed 1 of 26: `the_github_values_of_a_push_pass_validation` with `called Result::unwrap() on an Err value: job release의 step 2 (actions/checkout@v4)의 with ref: Unsupported workflow context: github.ref_name. …`. `cargo test -p build-machine-controller --locked --test replay` failed 1 of 3: `a_replay_of_a_commit_without_a_ref_name_is_refused_when_the_workflow_reads_one` with the same error. `crates/core/tests/expression.rs` did not compile: `error[E0432]: unresolved import build_machine_core::workflow::Github`, `error[E0425]: cannot find function github_context in module workflow`, `error[E0061]: this method takes 1 argument but 2 arguments were supplied` (`Template::render`). `any_other_github_value_still_fails_validation` passed before and after; it guards the names that stay unsupported.
+- Existing tests that used `github.ref`, `github.ref_name`, `github.event_name` or `github.sha` as examples of a context without a value now use `github.actor`, `github.repository` and `github.event.pull_request.merged`, because the four names have values by this change.
+- Green: core expression 6/6, core workflow 26/26, controller replay 3/3. `cargo test --workspace --locked` passed 119 tests; `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `build-machine ci validate /Users/maxkwon/Projects/soksak/sidecars/files --workflow .github/workflows/release.yml --event push --os macos` (sidecar-files `3c5863aefb8a161832542faa9b0d29af65a40fb8`, dirty, on `refs/heads/main`) returned `"status": "valid"` with stages build 2, release 1, setup 3, smoke 1, test 1, platform `macos` and repositories `soksak-app/core`. Without `--ref`, `github.ref_name` is `main`, so a run checks out `soksak-app/core` at `main`; a release rehearsal passes `--ref <tag>`.
+
 ## Checkout of another repository — 2026-10-04
 
 Platform: macOS 26.6.2 arm64 (controller and macOS worker code on the host; no VM and no `ci run`).

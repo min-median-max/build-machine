@@ -19,6 +19,7 @@ Rust 워크스페이스 하나입니다. 컨트롤러는 이 맥에서 돌고, �
 - 등록하는 프로젝트는 Git 저장소 루트입니다. 모노레포의 하위 앱은 workflow 단계의 `working-directory`로 선택하며, 하위 디렉터리를 별도 프로젝트로 등록할 수 없습니다.
 - `ci validate`는 저장소의 GitHub Actions workflow를 읽고, 지원하지 않는 action·컨테이너·서비스·표현식에 대해 실패로 닫습니다. `ci run`은 지원하는 `uses`와 `run` 단계를 선택한 OS 워커에서 실행하며 checkout·캐시·산출물·릴리스·서명은 로컬 어댑터로 대체합니다.
 - `actions/checkout` 단계는 `repository`, `ref`, `path`로 다른 저장소를 checkout할 수 있습니다. `machine.json`의 `repositories`가 그 GitHub 저장소(`owner/name`)를 이 Mac의 로컬 clone에 대응시킵니다. 재현은 그 clone의 commit된 branch와 tag를 bundle로 묶고, 단계의 branch·tag·commit SHA를 workspace 아래 `path`에 checkout합니다. 이 대응에 없는 저장소는 검증에서 실패합니다.
+- 표현식은 `steps.<id>.outputs.<name>`과 네 가지 `github` 값을 읽습니다: `github.event_name`(재현의 event), `github.sha`(재현한 revision), `github.ref`와 `github.ref_name`(재현이 checkout하는 branch나 tag: `--ref`의 tag나 branch, 또는 작업 트리의 현재 branch). 재현한 commit에 branch나 tag 이름이 없으면 `github.ref`나 `github.ref_name`을 읽는 workflow는 거부합니다. 그 밖의 context는 검증에서 실패합니다.
 - 워크플로 재현은 현재 작업 트리 또는 명시한 커밋·브랜치·태그를 받습니다. 확정된 리비전, 변경 여부, 이벤트, 단계 명령, 스테이지 결과, 산출물 체크섬, 제한을 기록합니다. workflow에 test나 smoke 단계가 없으면 `# build-machine: skip <stage> reason=...` 주석이 반드시 있어야 합니다. 지원 action을 쓰는 단계는 그 어댑터로 분류하므로, action의 이름이 스테이지 게이트를 대신 충족시키는 일은 없습니다.
 
 ## 명령

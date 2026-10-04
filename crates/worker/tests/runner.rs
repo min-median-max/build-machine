@@ -113,5 +113,5 @@ fn what_a_step_writes_to_github_output_is_its_outputs() {
     assert_eq!(runner.outputs()["php-min"]["notes"], "a\nb");
     assert_eq!(runner.outputs().len(), 1);
     let template = build_machine_core::workflow::Template::parse("${{ steps.php-min.outputs.version }}").unwrap();
-    assert_eq!(template.render(runner.outputs()), "8.4");
+    assert_eq!(template.render(runner.outputs(), &Default::default()), "8.4");
 }

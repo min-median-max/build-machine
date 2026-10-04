@@ -2,12 +2,13 @@
 //! read as GitHub reads them.
 //!
 //! Only what is knowable on this machine is accepted: the job status functions,
-//! literals, `!`, `&&`, `||`, `==`, `!=`, parentheses and the outputs of earlier
-//! steps (`steps.<id>.outputs.<name>`). A step output has its value once that
-//! step has run, so validation checks the reference and the run supplies the
-//! value. Any other context — `github.ref`, `runner.temp`, `hashFiles()` — has
-//! no local value, so an expression that reads one fails validation instead of
-//! being guessed at.
+//! literals, `!`, `&&`, `||`, `==`, `!=`, parentheses, the outputs of earlier
+//! steps (`steps.<id>.outputs.<name>`) and the replay's `github.event_name`,
+//! `github.sha`, `github.ref` and `github.ref_name`. A step output has its
+//! value once that step has run, so validation checks the reference and the
+//! run supplies the value. Any other context — `github.actor`, `runner.temp`,
+//! `hashFiles()` — has no local value, so an expression that reads one fails
+//! validation instead of being guessed at.
 
 use anyhow::{bail, Result};
 use std::collections::BTreeMap;
@@ -26,6 +27,34 @@ pub enum JobStatus {
     Cancelled,
 }
 
+/// The `github` values a replay has, as a push or a dispatch of that ref
+/// carries them on GitHub.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Github {
+    /// The replay's event.
+    pub event_name: String,
+    /// The replayed revision.
+    pub sha: String,
+    /// `refs/heads/<branch>` or `refs/tags/<tag>`. `None` is a commit that
+    /// no branch or tag names, and validation refuses a workflow that reads
+    /// `github.ref` or `github.ref_name` then.
+    pub reference: Option<String>,
+}
+
+/// The short name of `refs/heads/<branch>` or `refs/tags/<tag>`.
+pub fn ref_name(reference: &str) -> &str {
+    reference.strip_prefix("refs/heads/").or_else(|| reference.strip_prefix("refs/tags/")).unwrap_or(reference)
+}
+
+/// A `github` value an expression reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GithubValue {
+    EventName,
+    Sha,
+    Ref,
+    RefName,
+}
+
 /// A step output an expression reads.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Reference {
@@ -38,6 +67,7 @@ pub struct Reference {
 pub enum Expression {
     Literal(Value),
     Output(Reference),
+    Github(GithubValue),
     Success,
     Failure,
     Always,
@@ -104,13 +134,26 @@ impl Value {
 impl Expression {
     fn uses_status(&self) -> bool {
         match self {
-            Expression::Literal(_) | Expression::Output(_) => false,
+            Expression::Literal(_) | Expression::Output(_) | Expression::Github(_) => false,
             Expression::Success | Expression::Failure | Expression::Always | Expression::Cancelled => true,
             Expression::Not(inner) => inner.uses_status(),
             Expression::And(left, right)
             | Expression::Or(left, right)
             | Expression::Equal(left, right)
             | Expression::NotEqual(left, right) => left.uses_status() || right.uses_status(),
+        }
+    }
+
+    /// Whether the expression reads `github.ref` or `github.ref_name`.
+    fn reads_ref(&self) -> bool {
+        match self {
+            Expression::Github(value) => matches!(value, GithubValue::Ref | GithubValue::RefName),
+            Expression::Not(inner) => inner.reads_ref(),
+            Expression::And(left, right)
+            | Expression::Or(left, right)
+            | Expression::Equal(left, right)
+            | Expression::NotEqual(left, right) => left.reads_ref() || right.reads_ref(),
+            _ => false,
         }
     }
 
@@ -131,7 +174,7 @@ impl Expression {
 
     /// `&&` and `||` yield an operand, as GitHub's do, so
     /// `steps.a.outputs.v || 'none'` is a value and not a boolean.
-    fn evaluate(&self, status: JobStatus, outputs: &Outputs) -> Value {
+    fn evaluate(&self, status: JobStatus, outputs: &Outputs, github: &Github) -> Value {
         match self {
             Expression::Literal(value) => value.clone(),
             Expression::Output(reference) => Value::String(
@@ -141,32 +184,38 @@ impl Expression {
                     .cloned()
                     .unwrap_or_default(),
             ),
+            Expression::Github(value) => match value {
+                GithubValue::EventName => Value::String(github.event_name.clone()),
+                GithubValue::Sha => Value::String(github.sha.clone()),
+                GithubValue::Ref => github.reference.clone().map_or(Value::Null, Value::String),
+                GithubValue::RefName => github.reference.as_deref().map_or(Value::Null, |reference| Value::String(ref_name(reference).to_owned())),
+            },
             Expression::Success => Value::Bool(status == JobStatus::Success),
             Expression::Failure => Value::Bool(status == JobStatus::Failure),
             Expression::Always => Value::Bool(true),
             Expression::Cancelled => Value::Bool(status == JobStatus::Cancelled),
-            Expression::Not(inner) => Value::Bool(!inner.evaluate(status, outputs).truthy()),
+            Expression::Not(inner) => Value::Bool(!inner.evaluate(status, outputs, github).truthy()),
             Expression::And(left, right) => {
-                let left = left.evaluate(status, outputs);
+                let left = left.evaluate(status, outputs, github);
                 if left.truthy() {
-                    right.evaluate(status, outputs)
+                    right.evaluate(status, outputs, github)
                 } else {
                     left
                 }
             }
             Expression::Or(left, right) => {
-                let left = left.evaluate(status, outputs);
+                let left = left.evaluate(status, outputs, github);
                 if left.truthy() {
                     left
                 } else {
-                    right.evaluate(status, outputs)
+                    right.evaluate(status, outputs, github)
                 }
             }
             Expression::Equal(left, right) => {
-                Value::Bool(left.evaluate(status, outputs).equals(&right.evaluate(status, outputs)))
+                Value::Bool(left.evaluate(status, outputs, github).equals(&right.evaluate(status, outputs, github)))
             }
             Expression::NotEqual(left, right) => {
-                Value::Bool(!left.evaluate(status, outputs).equals(&right.evaluate(status, outputs)))
+                Value::Bool(!left.evaluate(status, outputs, github).equals(&right.evaluate(status, outputs, github)))
             }
         }
     }
@@ -217,11 +266,11 @@ impl Condition {
     /// A condition without a status function is implicitly `success() && (…)`,
     /// so a step after a failure or a cancellation runs only when its
     /// condition says so.
-    pub fn runs(&self, status: JobStatus, outputs: &Outputs) -> bool {
+    pub fn runs(&self, status: JobStatus, outputs: &Outputs, github: &Github) -> bool {
         match self {
             Condition::Secret => false,
             Condition::Expression { expression, uses_status } => {
-                let value = expression.evaluate(status, outputs).truthy();
+                let value = expression.evaluate(status, outputs, github).truthy();
                 if *uses_status {
                     value
                 } else {
@@ -229,6 +278,11 @@ impl Condition {
                 }
             }
         }
+    }
+
+    /// Whether the condition reads `github.ref` or `github.ref_name`.
+    pub fn reads_ref(&self) -> bool {
+        matches!(self, Condition::Expression { expression, .. } if expression.reads_ref())
     }
 
     /// The step outputs the condition reads.
@@ -279,14 +333,19 @@ impl Template {
         Ok(Template { parts })
     }
 
-    pub fn render(&self, outputs: &Outputs) -> String {
+    pub fn render(&self, outputs: &Outputs, github: &Github) -> String {
         self.parts
             .iter()
             .map(|part| match part {
                 Part::Text(text) => text.clone(),
-                Part::Expression(expression) => expression.evaluate(JobStatus::Success, outputs).text(),
+                Part::Expression(expression) => expression.evaluate(JobStatus::Success, outputs, github).text(),
             })
             .collect()
+    }
+
+    /// Whether the template reads `github.ref` or `github.ref_name`.
+    pub fn reads_ref(&self) -> bool {
+        self.parts.iter().any(|part| matches!(part, Part::Expression(expression) if expression.reads_ref()))
     }
 
     pub fn references(&self) -> Vec<Reference> {
@@ -486,7 +545,7 @@ impl Parser<'_> {
                     "true" => Expression::Literal(Value::Bool(true)),
                     "false" => Expression::Literal(Value::Bool(false)),
                     "null" => Expression::Literal(Value::Null),
-                    path => Expression::Output(step_output(path)?),
+                    path => context(path)?,
                 })
             }
             _ => bail!("Unsupported workflow expression: missing operand"),
@@ -494,15 +553,20 @@ impl Parser<'_> {
     }
 }
 
-/// `steps.<id>.outputs.<name>` is the one context with a local value.
-fn step_output(path: &str) -> Result<Reference> {
+/// `steps.<id>.outputs.<name>` and four `github` values are the contexts
+/// with a local value.
+fn context(path: &str) -> Result<Expression> {
     let parts: Vec<&str> = path.split('.').collect();
-    match parts.as_slice() {
+    Ok(match parts.as_slice() {
         ["steps", step, "outputs", output] if !step.is_empty() && !output.is_empty() => {
-            Ok(Reference { step: (*step).to_owned(), output: (*output).to_owned() })
+            Expression::Output(Reference { step: (*step).to_owned(), output: (*output).to_owned() })
         }
+        ["github", "event_name"] => Expression::Github(GithubValue::EventName),
+        ["github", "sha"] => Expression::Github(GithubValue::Sha),
+        ["github", "ref"] => Expression::Github(GithubValue::Ref),
+        ["github", "ref_name"] => Expression::Github(GithubValue::RefName),
         _ => bail!(
-            "Unsupported workflow context: {path}. Only steps.<id>.outputs.<name> has a value in a local replay."
+            "Unsupported workflow context: {path}. Only steps.<id>.outputs.<name>, github.event_name, github.sha, github.ref and github.ref_name have a value in a local replay."
         ),
-    }
+    })
 }

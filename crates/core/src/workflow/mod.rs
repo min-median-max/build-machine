@@ -6,7 +6,7 @@ pub mod parse;
 pub mod stage;
 
 pub use adapter::{Adapter, STAGE_ORDER};
-pub use condition::{Condition, JobStatus, Outputs, Reference, Template};
+pub use condition::{ref_name, Condition, Github, JobStatus, Outputs, Reference, Template};
 pub use parse::{checkout_inputs, checkout_target, names_secret, reads_input, CheckoutTarget, Job, Step, Workflow, DEFAULT_JOB_TIMEOUT_MINUTES};
 pub use stage::{check_gates, jobs_for, stage_counts, stage_of, stages, stages_for};
 
@@ -69,6 +69,22 @@ pub fn checkout_repositories(workflow: &Workflow, repositories: &BTreeMap<String
         found.insert(key.clone(), clone);
     }
     Ok(found)
+}
+
+/// The `github` values of a replay of `sha` for `event`, checked out as
+/// `reference` (`refs/heads/<branch>` or `refs/tags/<tag>`). A commit that no
+/// branch or tag names has no `github.ref`, so jobs that read it are refused
+/// rather than given an empty value.
+pub fn github_context(jobs: &[Job], event: &str, sha: &str, reference: Option<&str>) -> Result<Github> {
+    if reference.is_none() {
+        if let Some(job) = jobs.iter().find(|job| job.reads_ref) {
+            bail!(
+                "job {}가 github.ref 또는 github.ref_name을 읽지만 이 재현에는 ref 이름이 없어요: {sha}는 branch나 tag로 checkout되지 않아요(commit SHA 또는 detached HEAD). branch나 tag를 재현해야 해요.",
+                job.id
+            );
+        }
+    }
+    Ok(Github { event_name: event.to_owned(), sha: sha.to_owned(), reference: reference.map(str::to_owned) })
 }
 
 /// Read and validate a workflow file.
