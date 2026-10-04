@@ -3,6 +3,7 @@
 //! Exposed as a library so its behaviour can be tested directly, and driven by
 //! the binary beside it.
 
+pub mod actions;
 pub mod build;
 pub mod ci;
 #[cfg(target_os = "linux")]
@@ -12,6 +13,7 @@ pub mod macos;
 pub mod package;
 pub mod provision;
 pub mod run;
+pub mod runner;
 pub mod stream;
 #[cfg(windows)]
 pub mod win32;

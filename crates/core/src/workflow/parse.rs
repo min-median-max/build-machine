@@ -6,6 +6,7 @@
 //! changed into something the machine can run.
 
 use super::adapter::Adapter;
+use super::condition::Condition;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -14,6 +15,10 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase")]
 pub struct Step {
     pub index: u32,
+    /// Where the step falls in the whole workflow, jobs in `needs` order. A
+    /// replay runs steps in this order; the stage is only how they are reported.
+    #[serde(default)]
+    pub position: u32,
     pub name: String,
     pub adapter: Adapter,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,6 +106,11 @@ fn declared_events(document: &Yaml) -> Vec<String> {
     }
 }
 
+/// The step keys a replay honours. Any other key — `shell`,
+/// `continue-on-error`, `timeout-minutes` — changes how GitHub runs the step,
+/// so it fails validation rather than being dropped.
+const STEP_KEYS: [&str; 8] = ["name", "id", "uses", "run", "with", "env", "if", "working-directory"];
+
 /// Stage omissions the workflow documents on purpose.
 fn skip_comments(source: &str) -> BTreeMap<String, String> {
     let mut skips = BTreeMap::new();
@@ -111,7 +121,7 @@ fn skip_comments(source: &str) -> BTreeMap<String, String> {
         let Some((stage, reason)) = rest.split_once("reason=") else { continue };
         let stage = stage.trim();
         let reason = reason.trim();
-        if (stage == "test" || stage == "smoke") && !reason.is_empty() {
+        if matches!(stage, "build" | "test" | "smoke") && !reason.is_empty() {
             skips.insert(stage.to_owned(), reason.to_owned());
         }
     }
@@ -128,8 +138,14 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
     let mut steps = Vec::new();
     for (position, item) in items.iter().enumerate() {
         let index = position as u32 + 1;
-        if as_map(item).is_none() {
+        let Some(map) = as_map(item) else {
             bail!("step {index}가 객체가 아니에요.");
+        };
+        for key in map.keys() {
+            let key = text(Some(key)).unwrap_or_default();
+            if !STEP_KEYS.contains(&key.as_str()) {
+                bail!("job {job_id}의 step {index}에 있는 '{key}'는 아직 지원하지 않아요.");
+            }
         }
         let uses = text(get(item, "uses"));
         let run = text(get(item, "run"));
@@ -149,18 +165,27 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
         let name = text(get(item, "name"))
             .or_else(|| uses.clone())
             .unwrap_or_else(|| "run".to_owned());
+        let with = string_map(get(item, "with"));
+        if let Some(accepted) = adapter.inputs() {
+            if let Some(input) = with.keys().find(|input| !accepted.contains(&input.as_str())) {
+                bail!("{name}의 with 입력 '{input}'은 아직 지원하지 않아요. 지원 입력: {}", accepted.join(", "));
+            }
+        }
+        let condition = text(get(item, "if"));
+        Condition::parse(condition.as_deref()).with_context(|| format!("job {job_id}의 step {index} ({name})"))?;
         steps.push(Step {
             index,
+            position: 0,
             name,
             adapter,
             action,
             action_ref,
             run,
             working_directory: text(get(item, "working-directory")),
-            condition: text(get(item, "if")),
+            condition,
             reason: None,
             env: string_map(get(item, "env")),
-            with: string_map(get(item, "with")),
+            with,
             job_env: job_env.clone(),
             job_id: job_id.to_owned(),
         });
@@ -237,12 +262,18 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         let steps = parse_steps(&id, &env, get(value, "steps"))?;
         jobs.push(Job { id, runs_on, needs, env, steps });
     }
+    let mut jobs = order_jobs(jobs)?;
+    let mut position = 0;
+    for step in jobs.iter_mut().flat_map(|job| job.steps.iter_mut()) {
+        position += 1;
+        step.position = position;
+    }
     Ok(Workflow {
         path: path.to_owned(),
         name: text(get(&document, "name")).unwrap_or_else(|| path.to_owned()),
         event: event.to_owned(),
         reference: reference.map(str::to_owned),
-        jobs: order_jobs(jobs)?,
+        jobs,
         skips: skip_comments(source),
     })
 }

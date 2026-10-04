@@ -1,10 +1,12 @@
 //! The repository workflow read as this machine's build contract.
 
 pub mod adapter;
+pub mod condition;
 pub mod parse;
 pub mod stage;
 
 pub use adapter::{Adapter, STAGE_ORDER};
+pub use condition::Condition;
 pub use parse::{Job, Step, Workflow};
 pub use stage::{check_gates, stage_counts, stage_of, stages, stages_for};
 

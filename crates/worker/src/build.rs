@@ -387,6 +387,19 @@ pub fn build(request: &WorkRequest, tools: &Tools, release: bool) -> Result<Rece
     Ok(receipt)
 }
 
+/// The shell GitHub hands a workflow `run:` block that names none: `bash -e`
+/// on Linux and macOS, PowerShell on Windows.
+///
+/// A custom build command keeps `/bin/sh -eu`; a workflow step is written for
+/// a runner, and `-u` or a shell without bash would fail steps that pass there.
+pub fn workflow_shell(command: &str) -> (&'static str, Vec<String>) {
+    if cfg!(windows) {
+        shell_invocation(command)
+    } else {
+        ("bash", vec!["-e".to_owned(), "-c".to_owned(), command.to_owned()])
+    }
+}
+
 /// The shell a `run:` block is handed to, with the block already in place.
 ///
 /// A block is several lines and every one of them has to run. `cmd.exe /d /s

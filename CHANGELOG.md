@@ -1,5 +1,18 @@
 # Functional changes
 
+## Unreleased
+
+Workflow replay runs a workflow the way a runner does, so a repository's CI can be checked here before it is pushed.
+
+- `actions/setup-node`, `actions/setup-go` and `shivammathur/setup-php` install the release their step declares, directly or through a version file, and put it first on PATH for later steps. Node.js and Go archives and Composer are verified against the checksums nodejs.org, go.dev and getcomposer.org publish, and each release keeps its own directory, so a second replay installs nothing. PHP and its declared extensions come from the distribution's apt archive in a new elevated `ci-system` phase, which also makes that release the `php` on PATH. `setup-node` previously stood in with the Node.js of `machine.json` whatever the workflow declared.
+- Action names match without regard to case, as on GitHub: `Swatinem/rust-cache` failed validation.
+- Steps run in workflow order. They ran stage by stage, so a step classified as `setup` ran before an earlier `test` step whose output it read. The stage is now only how a step is reported.
+- After a failed step the replay continues as a runner does: a step runs only when its `if:` allows it after a failure, and a step that does not run is recorded as `skipped` with the reason. The replay used to stop at the first failure, and `if:` accepted only literal values; `success()`, `failure()`, `always()`, `cancelled()`, `!`, `&&`, `||` and `${{ }}` are read now, and any other context fails validation instead of failing the run.
+- `$GITHUB_ENV` and `$GITHUB_PATH` carry a step's variables and PATH entries to later steps, and `GITHUB_WORKSPACE`, `RUNNER_TEMP`, `RUNNER_OS` and `RUNNER_ARCH` are set.
+- A `run:` block runs in `bash -e` on Linux and macOS, as on a runner, rather than `/bin/sh -eu`. A replay no longer sets `RUSTUP_TOOLCHAIN`, which overrode the workflow's own `rust-toolchain.toml`.
+- A workflow without a build step may say why with `# build-machine: skip build reason=...`, as for test and smoke.
+- The step keys `shell`, `continue-on-error` and `timeout-minutes`, and a setup action input its adapter does not honour, fail validation; they were dropped. A `fetch-depth` on `actions/checkout` is recorded as a limit, because the snapshot carries no Git history.
+
 ## 0.1.0
 
 Rewritten as one Rust workspace. Python and PowerShell are removed; no script remains.

@@ -203,6 +203,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
+      - uses: actions/setup-go@v6
+      - uses: shivammathur/setup-php@v2
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - run: echo compile
@@ -332,4 +334,174 @@ jobs:
     let text = format!("{error:#}");
     assert!(text.contains("linux"), "{text}");
     assert!(text.contains("test 단계"), "{text}");
+}
+
+/// orm's CI selects Go, Node.js and PHP through their setup actions. Each has
+/// an adapter, an action's owner is matched without regard to case as GitHub
+/// matches it, and every one of them is setup.
+#[test]
+fn setup_actions_of_go_node_and_php_are_supported() {
+    let parsed = load(
+        r#"# build-machine: skip build reason=fixture
+# build-machine: skip smoke reason=fixture
+name: ci
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v6
+        with: { go-version: "1.27" }
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version-file: .php-version
+          extensions: pdo_mysql, pdo_pgsql, pdo_sqlite, openssl
+      - name: make check
+        run: make check
+"#,
+    )
+    .unwrap();
+    let stages = workflow::stages(&parsed);
+    let adapters: Vec<workflow::Adapter> = stages["setup"].iter().map(|step| step.adapter).collect();
+    assert_eq!(
+        adapters,
+        [workflow::Adapter::GoSetup, workflow::Adapter::NodeSetup, workflow::Adapter::Cache, workflow::Adapter::PhpSetup]
+    );
+    assert_eq!(stages["setup"][3].with["php-version-file"], ".php-version");
+}
+
+/// An input the adapter does not honour would change what the action does, so
+/// it fails validation instead of being dropped.
+#[test]
+fn an_input_a_setup_adapter_does_not_honour_fails_closed() {
+    let error = load(
+        r#"# build-machine: skip build reason=fixture
+# build-machine: skip smoke reason=fixture
+name: ci
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v6
+        with: { go-version: "1.27", check-latest: true }
+      - run: make check
+"#,
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("check-latest"), "{error:#}");
+}
+
+/// `shell`, `continue-on-error` and `timeout-minutes` change how a runner runs
+/// a step; dropping them would replay a different step.
+#[test]
+fn a_step_key_the_replay_does_not_honour_fails_closed() {
+    for key in ["shell: python", "continue-on-error: true", "timeout-minutes: 5"] {
+        let text = format!(
+            "# build-machine: skip build reason=fixture\n# build-machine: skip smoke reason=fixture\nname: ci\non: workflow_dispatch\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make check\n        {key}\n"
+        );
+        let error = load(&text).unwrap_err();
+        let name = key.split(':').next().unwrap();
+        assert!(format!("{error:#}").contains(name), "{key}: {error:#}");
+    }
+}
+
+/// A repository whose CI produces no artifact says so, as it does for test and
+/// smoke, instead of failing the build gate.
+#[test]
+fn a_build_stage_can_be_skipped_with_a_reason() {
+    let text = "name: ci\non: workflow_dispatch\njobs:\n  test:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make check\n# build-machine: skip smoke reason=fixture\n";
+    let error = load(text).unwrap_err();
+    assert!(format!("{error:#}").contains("skip build reason="), "{error:#}");
+
+    let parsed = load(&format!("# build-machine: skip build reason=the library ships no artifact\n{text}")).unwrap();
+    let stages = workflow::stages(&parsed);
+    assert_eq!(stages["build"][0].adapter, workflow::Adapter::Skip);
+    assert_eq!(stages["build"][0].reason.as_deref(), Some("the library ships no artifact"));
+}
+
+/// A step's place in the workflow is kept, jobs in `needs` order, because a
+/// replay runs steps in that order whatever stage reports them.
+#[test]
+fn steps_keep_their_workflow_position_across_jobs() {
+    let parsed = load(
+        r#"# build-machine: skip build reason=fixture
+# build-machine: skip smoke reason=fixture
+name: ci
+on: workflow_dispatch
+jobs:
+  second:
+    runs-on: ubuntu-24.04
+    needs: first
+    steps:
+      - name: make check
+        run: make check
+  first:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: database servers
+        run: make test-servers
+      - name: environment of the database servers
+        run: cat .runtime/servers/env >> "$GITHUB_ENV"
+"#,
+    )
+    .unwrap();
+    let mut steps: Vec<&workflow::Step> = parsed.jobs.iter().flat_map(|job| &job.steps).collect();
+    steps.sort_by_key(|step| step.position);
+    let names: Vec<&str> = steps.iter().map(|step| step.name.as_str()).collect();
+    assert_eq!(names, ["database servers", "environment of the database servers", "make check"]);
+    // The stage of the second step is setup and of the first is test, which
+    // is why execution cannot follow the stage order.
+    assert_eq!(workflow::stage_of(steps[0]), "test");
+    assert_eq!(workflow::stage_of(steps[1]), "setup");
+}
+
+#[test]
+fn conditions_follow_the_job_status_as_github_evaluates_them() {
+    use workflow::Condition;
+    let runs = |text: &str, failed: bool| Condition::parse(Some(text)).unwrap().runs(failed);
+    // No condition is success().
+    assert!(Condition::parse(None).unwrap().runs(false));
+    assert!(!Condition::parse(None).unwrap().runs(true));
+    // orm's later steps run after a failure, so one run reports every result.
+    assert!(runs("${{ !cancelled() }}", true));
+    assert!(runs("${{ !cancelled() }}", false));
+    assert!(runs("always()", true));
+    assert!(runs("failure()", true));
+    assert!(!runs("failure()", false));
+    // Without a status function a condition is success() && (condition).
+    assert!(runs("true", false));
+    assert!(!runs("true", true));
+    assert!(!runs("${{ false }}", false));
+    assert!(runs("success() || failure()", true));
+    assert!(!runs("!(always())", false));
+    assert_eq!(Condition::parse(Some("${{ secrets.TOKEN != '' }}")).unwrap(), Condition::Secret);
+    for unknown in ["github.ref == 'refs/heads/main'", "hashFiles('x')", "steps.a.outputs.b", "(always()"] {
+        assert!(Condition::parse(Some(unknown)).is_err(), "{unknown}");
+    }
+}
+
+/// A condition with no local value fails validation, before anything runs.
+#[test]
+fn a_condition_without_a_local_value_fails_validation() {
+    let error = load(
+        r#"# build-machine: skip build reason=fixture
+# build-machine: skip smoke reason=fixture
+name: ci
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: make check
+        if: github.event_name == 'push'
+"#,
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("github"), "{error:#}");
 }

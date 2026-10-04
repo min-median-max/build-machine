@@ -49,6 +49,11 @@ enum Command {
         #[arg(long)]
         request: PathBuf,
     },
+    /// Install what a workflow replay needs system-wide. Requires elevation.
+    CiSystem {
+        #[arg(long)]
+        request: PathBuf,
+    },
     /// Replay the supported part of a repository workflow.
     Ci {
         #[arg(long)]
@@ -113,6 +118,10 @@ fn execute() -> Result<()> {
             let root = build::project_root(&request)?;
             let receipt = run::latest_receipt(&root)?;
             launch(&receipt, &tools)?;
+        }
+        Command::CiSystem { request } => {
+            let request = WorkRequest::load(request)?;
+            ci::prepare_system(&request, &tools)?;
         }
         Command::Ci { request } => {
             let request = WorkRequest::load(request)?;

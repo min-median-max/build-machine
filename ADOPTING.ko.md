@@ -38,7 +38,15 @@
 ## 3. 선언된 도구 버전에 맞추세요
 
 머신은 [machine.json](machine.json)이 선언한 것만 설치하고 PATH 앞에 둡니다.
-`.nvmrc`나 `rust-toolchain.toml`을 읽지 않습니다.
+`build`는 `.nvmrc`나 `rust-toolchain.toml`을 읽지 않습니다.
+
+workflow 재현은 다릅니다. `actions/setup-node`, `actions/setup-go`,
+`shivammathur/setup-php`는 그 단계가 선언한 릴리스 — `node-version`, `go-version`,
+`php-version` 또는 대응하는 `*-version-file` — 를 설치하고 이후 단계의 PATH 앞에
+둡니다. 아카이브는 배포처(nodejs.org, go.dev, getcomposer.org)가 공개한 체크섬과
+대조합니다. PHP는 배포판의 apt 저장소에서 설치하므로, 배포판에 없는 릴리스는 그 단계를
+실패시킵니다. 재현은 Rust도 고정하지 않습니다. runner에서처럼 workflow의
+`rust-toolchain.toml`이나 rustup 호출이 고릅니다.
 
 선언된 Node.js·pnpm·Rust·Go에서 프로젝트가 동작하게 하거나, `machine.json`을 바꾸고
 그 이유를 남기세요. `build-machine doctor`가 실제 설치된 것과 선언된 것을 비교해
@@ -88,22 +96,34 @@ PowerShell은 모든 줄을 실행하고 마지막 종료 코드만 보고하므
 실패합니다.
 
 **지원하는 action** — `actions/checkout`, `pnpm/action-setup`,
-`actions/setup-node`, `dtolnay/rust-toolchain`, `swatinem/rust-cache`,
-`actions/cache`, `tauri-apps/tauri-action`, `actions/upload-artifact`,
-`actions/upload-pages-artifact`, `softprops/action-gh-release`. 셸 `run` 단계는
-쓰인 그대로 실행됩니다.
+`actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`,
+`dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
+`tauri-apps/tauri-action`, `actions/upload-artifact`,
+`actions/upload-pages-artifact`, `softprops/action-gh-release`. action의 owner와
+이름은 GitHub처럼 대소문자를 구분하지 않습니다. setup action의 `with` 입력 중
+어댑터가 반영하지 않는 것은 검증에서 실패합니다.
+
+셸 `run` 단계는 쓰인 그대로, runner처럼 Linux와 macOS에서는 `bash -e`로,
+Windows에서는 PowerShell로 실행합니다. 단계는 workflow 순서대로 실행합니다. 각 단계는
+`$GITHUB_ENV`로 변수를, `$GITHUB_PATH`로 PATH를 이후 단계에 넘길 수 있고,
+`GITHUB_WORKSPACE`, `RUNNER_TEMP`, `RUNNER_OS`, `RUNNER_ARCH`가 설정됩니다.
+`actions/checkout`은 `.git`이 없는 소스 스냅샷으로 대신하며, 1이 아닌
+`fetch-depth`는 제한으로 기록합니다.
 
 **지원하지 않는 것** — 컨테이너, 서비스, 재사용 workflow, `strategy.matrix`,
-어댑터가 없는 action. 검증에서 실패합니다.
+어댑터가 없는 action, 단계 키 `shell`, `continue-on-error`, `timeout-minutes`.
+검증에서 실패합니다.
 
-**표현식** — 로컬에서 값을 알 수 없는 조건은 실행을 실패시킵니다. 비밀에 의존하는
-조건은 거짓으로 두고 제한으로 기록하므로, 서명 단계는 어중간하게 시도되지 않고
-건너뜁니다.
+**표현식** — `if:`에는 `${{ }}` 안이든 밖이든 `success()`, `failure()`,
+`always()`, `cancelled()`, `true`, `false`, `!`, `&&`, `||`, 괄호를 쓸 수 있습니다.
+어떤 단계가 실패하면 그 뒤 단계는 runner에서처럼 `if:`가 허용할 때만 실행하므로,
+`if: ${{ !cancelled() }}`는 계속 결과를 보고합니다. 그 밖의 context를 읽는 조건은
+검증에서 실패합니다. 비밀에 의존하는 조건은 거짓으로 두고 제한으로 기록하므로, 서명
+단계는 어중간하게 시도되지 않고 건너뜁니다.
 
 ### 세 개의 게이트
 
-workflow에는 **build**가 있어야 하고, **test**와 **smoke**는 있거나 없는 이유를
-밝혀야 합니다:
+workflow에는 **build**, **test**, **smoke**가 있거나 없는 이유를 밝혀야 합니다:
 
 ```yaml
 # build-machine: skip smoke reason=데스크톱 실행은 로그인된 세션에서 따로 확인합니다
@@ -124,6 +144,10 @@ workflow에는 **build**가 있어야 하고, **test**와 **smoke**는 있거나
 
 그러니 셸 단계 이름은 하는 일대로 지으세요. action의 이름은 절대 세지 않습니다 —
 `actions/checkout`에 "check"가 들어 있지만 test 스테이지가 되지 않습니다.
+
+스테이지는 단계를 보고하는 방식이지 실행 시점이 아닙니다. 단계는 workflow에 쓰인
+순서대로 실행하므로, 앞 단계가 만든 것을 읽는 단계 — `make test-servers` 다음에 그것이
+쓴 환경 파일을 읽는 단계 — 가 그것을 찾습니다.
 
 ### 한 플랫폼을 못박은 workflow는 그곳에서만 재현됩니다
 

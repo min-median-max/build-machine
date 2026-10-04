@@ -1,5 +1,18 @@
 # 기능 변경
 
+## 미출시
+
+workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 push하기 전에 여기서 확인할 수 있습니다.
+
+- `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`가 단계에 직접 또는 버전 파일로 선언한 릴리스를 설치하고 이후 단계의 PATH 앞에 둡니다. Node.js·Go 아카이브와 Composer는 nodejs.org, go.dev, getcomposer.org가 공개한 체크섬과 대조하고, 릴리스마다 자기 디렉터리를 두므로 두 번째 재현은 아무것도 설치하지 않습니다. PHP와 선언한 확장은 새 권한 단계 `ci-system`에서 배포판 apt 저장소로 설치하며, 그 릴리스를 PATH의 `php`로 정합니다. 이전에는 `setup-node`가 workflow의 선언과 상관없이 `machine.json`의 Node.js로 대신했습니다.
+- action 이름을 GitHub처럼 대소문자 구분 없이 맞춥니다. `Swatinem/rust-cache`가 검증에서 실패했습니다.
+- 단계를 workflow 순서대로 실행합니다. 이전에는 스테이지별로 실행해서, `setup`으로 분류된 단계가 자신이 읽는 출력을 만드는 앞의 `test` 단계보다 먼저 실행됐습니다. 스테이지는 이제 보고 방식일 뿐입니다.
+- 단계가 실패해도 runner처럼 계속합니다. 실패 뒤에는 `if:`가 허용하는 단계만 실행하고, 실행하지 않은 단계는 이유와 함께 `skipped`로 기록합니다. 이전에는 첫 실패에서 멈췄고 `if:`는 리터럴 값만 받았습니다. 이제 `success()`, `failure()`, `always()`, `cancelled()`, `!`, `&&`, `||`, `${{ }}`를 읽고, 그 밖의 context는 실행 중이 아니라 검증에서 실패합니다.
+- `$GITHUB_ENV`와 `$GITHUB_PATH`가 단계의 변수와 PATH 항목을 이후 단계로 넘기고, `GITHUB_WORKSPACE`, `RUNNER_TEMP`, `RUNNER_OS`, `RUNNER_ARCH`를 설정합니다.
+- `run:` 블록은 Linux와 macOS에서 `/bin/sh -eu`가 아니라 runner처럼 `bash -e`로 실행합니다. 재현은 workflow의 `rust-toolchain.toml`을 덮어쓰던 `RUSTUP_TOOLCHAIN`을 더 이상 설정하지 않습니다.
+- build 단계가 없는 workflow는 test·smoke처럼 `# build-machine: skip build reason=...`로 이유를 밝힐 수 있습니다.
+- 단계 키 `shell`, `continue-on-error`, `timeout-minutes`와 어댑터가 반영하지 않는 setup action 입력은 버려지지 않고 검증에서 실패합니다. 스냅샷에는 Git 기록이 없으므로 `actions/checkout`의 `fetch-depth`는 제한으로 기록합니다.
+
 ## 0.1.0
 
 Rust 워크스페이스 하나로 다시 작성했습니다. Python과 PowerShell을 제거했고 스크립트는 남기지 않았습니다.

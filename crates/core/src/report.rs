@@ -64,6 +64,9 @@ pub enum Outcome {
     PassedWithLimits,
     Failed,
     Timeout,
+    /// A workflow step that did not run: its `if` was false, or an earlier step
+    /// failed and its `if` does not run after a failure.
+    Skipped,
 }
 
 impl Outcome {

@@ -125,7 +125,7 @@ extern "C" {
 }
 
 /// Unpack a tarball into a staging directory beside the managed root.
-fn extract_tar(archive: &Path, staging: &Path) -> Result<()> {
+pub(crate) fn extract_tar(archive: &Path, staging: &Path) -> Result<()> {
     std::fs::create_dir_all(staging)?;
     let arguments = vec![
         "-xf".to_owned(),
@@ -137,7 +137,7 @@ fn extract_tar(archive: &Path, staging: &Path) -> Result<()> {
     Ok(())
 }
 
-fn staging_for(tools: &Tools, name: &str) -> Result<std::path::PathBuf> {
+pub(crate) fn staging_for(tools: &Tools, name: &str) -> Result<std::path::PathBuf> {
     let staging = tools.root.join(format!(".extract-{name}"));
     if staging.exists() {
         bail!("An incomplete extraction exists at {}. Inspect it before retrying.", staging.display());

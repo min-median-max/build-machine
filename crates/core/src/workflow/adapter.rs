@@ -10,6 +10,8 @@ pub enum Adapter {
     Checkout,
     PnpmSetup,
     NodeSetup,
+    GoSetup,
+    PhpSetup,
     RustSetup,
     Cache,
     TauriBuild,
@@ -28,6 +30,8 @@ impl Adapter {
             Adapter::Checkout => "checkout",
             Adapter::PnpmSetup => "pnpm-setup",
             Adapter::NodeSetup => "node-setup",
+            Adapter::GoSetup => "go-setup",
+            Adapter::PhpSetup => "php-setup",
             Adapter::RustSetup => "rust-setup",
             Adapter::Cache => "cache",
             Adapter::TauriBuild => "tauri-build",
@@ -40,11 +44,16 @@ impl Adapter {
 
     /// Resolve an action name. `None` means this machine has no adapter for it,
     /// which fails validation rather than being silently ignored.
+    ///
+    /// GitHub resolves an action's owner and repository without regard to case,
+    /// so `Swatinem/rust-cache` and `swatinem/rust-cache` are the same action.
     pub fn for_action(name: &str) -> Option<Adapter> {
-        Some(match name {
+        Some(match name.to_ascii_lowercase().as_str() {
             "actions/checkout" => Adapter::Checkout,
             "pnpm/action-setup" => Adapter::PnpmSetup,
             "actions/setup-node" => Adapter::NodeSetup,
+            "actions/setup-go" => Adapter::GoSetup,
+            "shivammathur/setup-php" => Adapter::PhpSetup,
             "dtolnay/rust-toolchain" => Adapter::RustSetup,
             "swatinem/rust-cache" | "actions/cache" => Adapter::Cache,
             "tauri-apps/tauri-action" => Adapter::TauriBuild,
@@ -64,6 +73,8 @@ impl Adapter {
             Adapter::Checkout
             | Adapter::PnpmSetup
             | Adapter::NodeSetup
+            | Adapter::GoSetup
+            | Adapter::PhpSetup
             | Adapter::RustSetup
             | Adapter::Cache => "setup",
             Adapter::TauriBuild => "build",
@@ -81,9 +92,24 @@ impl Adapter {
             Adapter::Checkout
                 | Adapter::PnpmSetup
                 | Adapter::NodeSetup
+                | Adapter::GoSetup
+                | Adapter::PhpSetup
                 | Adapter::RustSetup
                 | Adapter::Cache
         )
+    }
+
+    /// The `with` inputs this adapter honours, for the adapters that install
+    /// what a workflow declares. An input outside this list changes what the
+    /// action would do, so it fails validation instead of being ignored.
+    /// `None` means the adapter does not read its inputs.
+    pub fn inputs(&self) -> Option<&'static [&'static str]> {
+        Some(match self {
+            Adapter::NodeSetup => &["node-version", "node-version-file", "cache", "cache-dependency-path"],
+            Adapter::GoSetup => &["go-version", "go-version-file", "cache", "cache-dependency-path"],
+            Adapter::PhpSetup => &["php-version", "php-version-file", "extensions", "tools", "coverage"],
+            _ => return None,
+        })
     }
 
     /// Adapters that replace an external GitHub service and must be recorded as

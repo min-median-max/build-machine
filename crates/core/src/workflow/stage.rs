@@ -40,11 +40,12 @@ pub fn stages_for(workflow: &Workflow, platform: Option<Platform>) -> BTreeMap<S
             grouped.entry(stage_of(step).to_owned()).or_default().push(step.clone());
         }
     }
-    for stage in ["test", "smoke"] {
+    for stage in ["build", "test", "smoke"] {
         if grouped.get(stage).is_some_and(|steps| steps.is_empty()) {
             if let Some(reason) = workflow.skips.get(stage) {
                 let mut marker = Step {
                     index: 0,
+                    position: 0,
                     name: format!("skip {stage}"),
                     adapter: Adapter::Skip,
                     action: None,
@@ -66,7 +67,7 @@ pub fn stages_for(workflow: &Workflow, platform: Option<Platform>) -> BTreeMap<S
     grouped
 }
 
-/// A workflow must build, and must either test and smoke or say why it does not.
+/// A workflow must build, test and smoke, or say why it does not.
 ///
 /// Each operating system the workflow has a job for is checked on its own. A
 /// workflow that tests on macOS and not on Linux would otherwise pass while
@@ -85,10 +86,7 @@ pub fn check_gates(workflow: &Workflow) -> Result<()> {
 fn check_gates_for(workflow: &Workflow, platform: Option<Platform>) -> Result<()> {
     let grouped = stages_for(workflow, platform);
     let where_ = platform.map(|value| format!("{value}에 ")).unwrap_or_default();
-    if grouped.get("build").is_none_or(|steps| steps.is_empty()) {
-        bail!("{where_}build 단계가 없어요. 지원하는 build action 또는 build 명령을 workflow에 추가해야 해요.");
-    }
-    for stage in ["test", "smoke"] {
+    for stage in ["build", "test", "smoke"] {
         let present = grouped.get(stage).is_some_and(|steps| !steps.is_empty());
         if !present && !workflow.skips.contains_key(stage) {
             bail!("{where_}{stage} 단계가 없어요. 워크플로에 '# build-machine: skip {stage} reason=...' 주석을 추가해야 해요.");

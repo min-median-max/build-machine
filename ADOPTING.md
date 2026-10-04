@@ -42,7 +42,16 @@ exactly which item is not satisfied yet.
 ## 3. Match the declared tool versions
 
 The machine installs exactly what [machine.json](machine.json) declares and puts
-it first on PATH. It does not read your `.nvmrc` or `rust-toolchain.toml`.
+it first on PATH. A `build` does not read your `.nvmrc` or `rust-toolchain.toml`.
+
+A workflow replay is different: `actions/setup-node`, `actions/setup-go` and
+`shivammathur/setup-php` install the release their step declares — through
+`node-version`, `go-version`, `php-version` or the matching `*-version-file` —
+and put it first on PATH for the steps after them. The archive is checked
+against the checksum its publisher lists (nodejs.org, go.dev, getcomposer.org);
+PHP comes from the distribution's apt archive, so a release the distribution
+does not carry fails the step. A replay does not pin Rust either: the workflow's
+`rust-toolchain.toml` or rustup call selects it, as on a runner.
 
 Make your project work with the declared Node.js, pnpm, Rust and Go, or change
 `machine.json` and say why. `build-machine doctor` reports what is actually
@@ -93,22 +102,36 @@ the part of it this machine can actually perform. Anything else fails
 validation rather than being quietly changed into something else.
 
 **Supported actions** — `actions/checkout`, `pnpm/action-setup`,
-`actions/setup-node`, `dtolnay/rust-toolchain`, `swatinem/rust-cache`,
-`actions/cache`, `tauri-apps/tauri-action`, `actions/upload-artifact`,
-`actions/upload-pages-artifact`, `softprops/action-gh-release`. Shell `run`
-steps execute as written.
+`actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`,
+`dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
+`tauri-apps/tauri-action`, `actions/upload-artifact`,
+`actions/upload-pages-artifact`, `softprops/action-gh-release`. An action's
+owner and name match without regard to case, as on GitHub. A setup action's
+`with` input that its adapter does not honour fails validation.
+
+Shell `run` steps execute as written, in `bash -e` on Linux and macOS as a
+runner runs them, and in PowerShell on Windows. Steps run in workflow order.
+Each step can set variables through `$GITHUB_ENV` and add to PATH through
+`$GITHUB_PATH` for the steps after it; `GITHUB_WORKSPACE`, `RUNNER_TEMP`,
+`RUNNER_OS` and `RUNNER_ARCH` are set. `actions/checkout` stands in with the
+source snapshot, which carries no `.git`; a `fetch-depth` other than 1 is
+recorded as a limit.
 
 **Not supported** — containers, services, reusable workflows, `strategy.matrix`,
-and any action without an adapter. These fail validation.
+any action without an adapter, and the step keys `shell`, `continue-on-error`
+and `timeout-minutes`. These fail validation.
 
-**Expressions** — a condition whose value cannot be known locally fails the run.
-A condition that depends on a secret is treated as false and recorded as a
-limit, so a signing step is skipped rather than half-attempted.
+**Expressions** — an `if:` may use `success()`, `failure()`, `always()`,
+`cancelled()`, `true`, `false`, `!`, `&&`, `||` and parentheses, inside `${{ }}`
+or not. After a failed step, the steps after it run only when their `if:`
+says so, as on a runner, so `if: ${{ !cancelled() }}` keeps reporting. A
+condition that reads any other context fails validation. A condition that
+depends on a secret is treated as false and recorded as a limit, so a signing
+step is skipped rather than half-attempted.
 
 ### The three gates
 
-A workflow must **build**, and must either **test** and **smoke** or say why it
-does not:
+A workflow must **build**, **test** and **smoke**, or say why it does not:
 
 ```yaml
 # build-machine: skip smoke reason=the desktop launch is verified separately against a signed-in session
@@ -131,6 +154,10 @@ their own name and command, matching `smoke`/`launch`/`health`/`e2e`, then
 
 So name your shell steps for what they do. An action's own name never counts —
 `actions/checkout` contains "check" and does not make a test stage.
+
+The stage is how a step is reported, not when it runs. Steps run in the order
+the workflow writes them, so a step that reads what an earlier step produced —
+`make test-servers` and then the environment file it wrote — finds it.
 
 ### A workflow that hard-codes one platform can only be replayed there
 

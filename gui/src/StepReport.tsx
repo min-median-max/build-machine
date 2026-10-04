@@ -2,11 +2,11 @@ import { Icon } from './Icons';
 import { platformNames, type BuildRecord, type Platform, type PlatformResult, type WorkflowStep } from './types';
 
 const stageNames: Record<string, string> = { doctor: '환경 진단', setup: '준비', test: '테스트', build: '빌드', smoke: '스모크', release: '릴리스' };
-const stepMarks: Record<string, 'check' | 'alert' | 'clock'> = { passed: 'check', passed_with_limits: 'check', failed: 'alert', timeout: 'alert' };
+const stepMarks: Record<string, 'check' | 'alert' | 'clock'> = { passed: 'check', passed_with_limits: 'check', failed: 'alert', timeout: 'alert', skipped: 'clock' };
 
 function stepLabel(step: WorkflowStep) {
   if (step.status === 'timeout') return `시간 초과 (${step.timeoutSeconds ?? '?'}초)`;
-  if (step.skipped) return '로컬에서 건너뜀';
+  if (step.skipped) return step.reason || '건너뜀';
   if (step.status === 'passed_with_limits') return step.reason || '제한 포함';
   if (step.localAdapter) return '로컬 어댑터로 대체';
   if (typeof step.exitCode === 'number') return `종료 코드 ${step.exitCode}`;

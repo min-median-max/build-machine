@@ -163,11 +163,6 @@ fn execute_platform(
     transport.prepare()?;
     // System-wide prerequisites need rights the desktop user does not have, so
     // that step runs on its own before the work the desktop user must do.
-    if matches!(operation.action, Action::Setup | Action::Build | Action::Release | Action::Ci)
-        && platform != Platform::Macos
-    {
-        transport.invoke_elevated(&["setup-system".to_owned()], log)?;
-    }
     // Each platform receives the jobs its own runner label claims.
     let stages = workflow
         .map(|workflow| build_machine_core::workflow::stages_for(workflow, Some(platform)))
@@ -176,6 +171,22 @@ fn execute_platform(
         Some(snapshot) => Some(write_request(operation, platform, snapshot, &stages, transport.as_ref(), state)?.1),
         None => None,
     };
+    if platform != Platform::Macos {
+        match (operation.action, request.as_deref()) {
+            // A replay also installs what its setup actions declare system-wide,
+            // which the request names.
+            (Action::Ci, Some(request)) => {
+                transport.invoke_elevated(
+                    &["ci-system".to_owned(), "--request".to_owned(), request.to_owned()],
+                    log,
+                )?;
+            }
+            (Action::Setup | Action::Build | Action::Release | Action::Ci, _) => {
+                transport.invoke_elevated(&["setup-system".to_owned()], log)?;
+            }
+            _ => {}
+        }
+    }
     let arguments = worker_arguments(operation, request.as_deref());
     let output = transport.invoke(&arguments, log)?;
     if operation.action == Action::Ci {
