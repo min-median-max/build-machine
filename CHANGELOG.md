@@ -12,6 +12,7 @@ Workflow replay runs a workflow the way a runner does, so a repository's CI can 
 - A `run:` block runs in `bash -e` on Linux and macOS, as on a runner, rather than `/bin/sh -eu`. A replay no longer sets `RUSTUP_TOOLCHAIN`, which overrode the workflow's own `rust-toolchain.toml`.
 - A workflow without a build step may say why with `# build-machine: skip build reason=...`, as for test and smoke.
 - The step keys `shell`, `continue-on-error` and `timeout-minutes`, and a setup action input its adapter does not honour, fail validation; they were dropped. A `fetch-depth` on `actions/checkout` is recorded as a limit, because the snapshot carries no Git history.
+- `cargo xtask` works as the README documents. The workspace declared no `xtask` alias, so `cargo xtask worker --os linux`, `cargo xtask test` and `cargo xtask build --run` failed with "no such command".
 
 ## 0.1.0
 

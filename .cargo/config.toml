@@ -1,0 +1,3 @@
+[alias]
+# `cargo xtask <task>` runs the development tasks of crates/xtask.
+xtask = "run --quiet --locked --package build-machine-xtask --bin xtask --"

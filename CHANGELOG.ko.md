@@ -12,6 +12,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - `run:` 블록은 Linux와 macOS에서 `/bin/sh -eu`가 아니라 runner처럼 `bash -e`로 실행합니다. 재현은 workflow의 `rust-toolchain.toml`을 덮어쓰던 `RUSTUP_TOOLCHAIN`을 더 이상 설정하지 않습니다.
 - build 단계가 없는 workflow는 test·smoke처럼 `# build-machine: skip build reason=...`로 이유를 밝힐 수 있습니다.
 - 단계 키 `shell`, `continue-on-error`, `timeout-minutes`와 어댑터가 반영하지 않는 setup action 입력은 버려지지 않고 검증에서 실패합니다. 스냅샷에는 Git 기록이 없으므로 `actions/checkout`의 `fetch-depth`는 제한으로 기록합니다.
+- README에 적힌 대로 `cargo xtask`가 동작합니다. 워크스페이스에 `xtask` alias가 없어서 `cargo xtask worker --os linux`, `cargo xtask test`, `cargo xtask build --run`이 "no such command"로 실패했습니다.
 
 ## 0.1.0
 
