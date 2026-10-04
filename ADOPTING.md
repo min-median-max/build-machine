@@ -207,6 +207,15 @@ and the jobs that need it see `skipped`. `needs.<job>.outputs`, step outputs and
 other contexts in a job's `if` fail validation. A job cannot need a job of another operating system, because each
 operating system is replayed on its own.
 
+**Reusable workflows** — a job with `uses: ./.github/workflows/<file>` (and
+only `name`, `needs` and `permissions`) runs the jobs of that workflow of the
+same repository, which must declare `on: workflow_call`, in its place: they are
+named `<calling job>/<called job>`, the first of them wait for what the calling
+job needs, a job that needs the calling job waits for all of them, and they see
+the caller's `github` values. A replay of a ref reads the called workflow from
+that ref. `with`, `secrets` and `if` on the calling job, a workflow of another
+repository and nesting deeper than four levels fail validation.
+
 **Time limits** — a job runs for its `timeout-minutes`, or GitHub's 360 minutes
 when it declares none, and a step for its own `timeout-minutes` within what is
 left of its job's. Nothing else bounds a step. A step past its own limit fails;

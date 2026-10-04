@@ -132,18 +132,23 @@ pub fn for_replay(operation: &Operation, state: &Path) -> Result<Replay> {
                         .unwrap_or_else(|_| PathBuf::from(&current.path))
                 }
             };
-            let output = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&root)
-                .arg("show")
-                .arg(format!("{reference}:{}", relative.to_string_lossy().replace('\\', "/")))
-                .output()
-                .context("git show를 실행하지 못했어요.")?;
-            if !output.status.success() {
-                anyhow::bail!("고정 ref에서 workflow를 읽지 못했어요: {}", relative.display());
-            }
-            let text = String::from_utf8_lossy(&output.stdout).into_owned();
-            workflow::load_text(&relative.to_string_lossy(), &text, &event, Some(reference))?
+            // The workflow and every reusable workflow it calls come from the ref.
+            let show = |path: &str| -> Result<String> {
+                let output = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&root)
+                    .arg("show")
+                    .arg(format!("{reference}:{}", path.replace('\\', "/")))
+                    .output()
+                    .context("git show를 실행하지 못했어요.")?;
+                if !output.status.success() {
+                    anyhow::bail!("고정 ref {reference}에서 workflow를 읽지 못했어요: {path}");
+                }
+                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+            };
+            let path = relative.to_string_lossy().into_owned();
+            let text = show(&path)?;
+            workflow::load_text(&path, &text, &event, Some(reference), &show)?
         }
         None => workflow::discover(&root, operation.workflow.as_deref(), &event, None)?,
     };

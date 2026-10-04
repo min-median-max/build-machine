@@ -10,6 +10,7 @@ use super::condition::{Condition, Github, Outputs, Reference, Template};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -183,6 +184,14 @@ const STEP_KEYS: [&str; 9] = ["name", "id", "uses", "run", "with", "env", "if", 
 /// fails validation.
 const JOB_KEYS: [&str; 9] =
     ["name", "runs-on", "needs", "env", "steps", "timeout-minutes", "environment", "if", "permissions"];
+
+/// The keys of a job that calls a reusable workflow. `with`, `secrets` and
+/// `strategy` would give the called workflow inputs the replay does not
+/// pass, and `if` would decide for every called job; they are refused.
+const CALL_KEYS: [&str; 4] = ["name", "uses", "needs", "permissions"];
+
+/// GitHub runs reusable workflows nested up to four levels.
+const MAX_CALL_DEPTH: usize = 4;
 
 /// The workflow keys a replay implements. `permissions` and `concurrency`
 /// only govern the GitHub token and overlapping runs, neither of which a
@@ -542,7 +551,19 @@ fn order_jobs(mut jobs: Vec<Job>) -> Result<Vec<Job>> {
     Ok(ordered)
 }
 
+/// Read a workflow file whose path is `<root>/.github/workflows/<file>`; a
+/// reusable workflow it calls is read beside it.
 pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> Result<Workflow> {
+    let root = Path::new(path).parent().and_then(Path::parent).and_then(Path::parent).map(Path::to_path_buf).unwrap_or_default();
+    parse_with(path, source, event, reference, &|relative: &str| {
+        std::fs::read_to_string(root.join(relative))
+            .with_context(|| format!("재사용 워크플로를 읽지 못했어요: {}", root.join(relative).display()))
+    })
+}
+
+/// Read a workflow with `read` giving the text of a repository path, so a
+/// workflow of a fixed ref reads the reusable workflows of that ref.
+pub fn parse_with(path: &str, source: &str, event: &str, reference: Option<&str>, read: &dyn Fn(&str) -> Result<String>) -> Result<Workflow> {
     let document: Yaml = serde_yaml_ng::from_str(source)
         .with_context(|| format!("워크플로 YAML을 읽지 못했어요: {path}"))?;
     let events = declared_events(&document);
@@ -555,18 +576,33 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         bail!("이 워크플로는 {event} 이벤트를 지원하지 않아요. 지원 이벤트: {}", sorted.join(", "));
     }
     check_keys(&document, &WORKFLOW_KEYS, "워크플로")?;
-    let workflow_env = string_map(get(&document, "env"));
-    let Some(Yaml::Mapping(job_map)) = get(&document, "jobs") else {
+    let jobs = parse_jobs(&document, read, 0)?;
+    finish(path, source, event, reference, &document, jobs)
+}
+
+/// The jobs of a workflow document, a call of a reusable workflow replaced
+/// by the called workflow's jobs, named `<calling job>/<called job>`.
+fn parse_jobs(document: &Yaml, read: &dyn Fn(&str) -> Result<String>, depth: usize) -> Result<Vec<Job>> {
+    let workflow_env = string_map(get(document, "env"));
+    let Some(Yaml::Mapping(job_map)) = get(document, "jobs") else {
         bail!("워크플로에 jobs가 없어요.");
     };
     if job_map.is_empty() {
         bail!("워크플로에 jobs가 없어요.");
     }
     let mut jobs = Vec::new();
+    // The jobs that took the place of each calling job.
+    let mut called: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (key, value) in job_map {
         let id = text(Some(key)).unwrap_or_default();
         if as_map(value).is_none() {
             bail!("job {id}가 객체가 아니에요.");
+        }
+        if let Some(uses) = text(get(value, "uses")) {
+            let inner = call(&id, value, &uses, read, depth)?;
+            called.insert(id, inner.iter().map(|job| job.id.clone()).collect());
+            jobs.extend(inner);
+            continue;
         }
         let Some(runs_on) = text(get(value, "runs-on")) else {
             bail!("job {id}에 runs-on이 없어요.");
@@ -618,6 +654,54 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
             condition,
         });
     }
+    // A job that needs a calling job waits for every job of the call.
+    for job in &mut jobs {
+        job.needs = job
+            .needs
+            .iter()
+            .flat_map(|need| called.get(need).cloned().unwrap_or_else(|| vec![need.clone()]))
+            .collect();
+    }
+    Ok(jobs)
+}
+
+/// The jobs of the reusable workflow that the job `id` calls with `uses`.
+fn call(id: &str, value: &Yaml, uses: &str, read: &dyn Fn(&str) -> Result<String>, depth: usize) -> Result<Vec<Job>> {
+    check_keys(value, &CALL_KEYS, &format!("재사용 워크플로를 부르는 job {id}"))?;
+    let Some(relative) = uses.strip_prefix("./").filter(|path| path.starts_with(".github/workflows/") && !path.contains('@')) else {
+        bail!("job {id}의 uses는 이 저장소의 ./.github/workflows/<file>만 지원해요: {uses}");
+    };
+    if depth >= MAX_CALL_DEPTH {
+        bail!("job {id}의 재사용 워크플로 호출이 {MAX_CALL_DEPTH}단계를 넘어요.");
+    }
+    let source = read(relative)?;
+    let document: Yaml =
+        serde_yaml_ng::from_str(&source).with_context(|| format!("재사용 워크플로 YAML을 읽지 못했어요: {relative}"))?;
+    if !declared_events(&document).iter().any(|event| event == "workflow_call") {
+        bail!("job {id}가 부르는 {relative}는 on: workflow_call을 선언하지 않아요.");
+    }
+    check_keys(&document, &WORKFLOW_KEYS, relative)?;
+    let needs = match get(value, "needs") {
+        None => Vec::new(),
+        Some(Yaml::String(value)) => vec![value.clone()],
+        Some(Yaml::Sequence(values)) => values.iter().filter_map(|value| text(Some(value))).collect(),
+        Some(_) => bail!("job {id}의 needs 형식이 올바르지 않아요."),
+    };
+    let mut jobs = parse_jobs(&document, read, depth + 1)?;
+    for job in &mut jobs {
+        job.id = format!("{id}/{}", job.id);
+        // A called job that needs another called job waits for it; one that
+        // needs nothing waits for what the calling job needs.
+        job.needs = if job.needs.is_empty() { needs.clone() } else { job.needs.iter().map(|need| format!("{id}/{need}")).collect() };
+        for step in &mut job.steps {
+            step.job_id = job.id.clone();
+        }
+    }
+    Ok(jobs)
+}
+
+/// Check the jobs across platforms, order them and number their steps.
+fn finish(path: &str, source: &str, event: &str, reference: Option<&str>, document: &Yaml, jobs: Vec<Job>) -> Result<Workflow> {
     // Each platform replays its own jobs, so a job can only wait for a job
     // that is replayed wherever it is.
     for job in &jobs {
@@ -639,7 +723,7 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
     }
     Ok(Workflow {
         path: path.to_owned(),
-        name: text(get(&document, "name")).unwrap_or_else(|| path.to_owned()),
+        name: text(get(document, "name")).unwrap_or_else(|| path.to_owned()),
         event: event.to_owned(),
         reference: reference.map(str::to_owned),
         jobs,

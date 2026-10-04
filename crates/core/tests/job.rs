@@ -29,7 +29,6 @@ fn a_job_key_the_replay_does_not_implement_fails_closed() {
         "strategy:\n      fail-fast: false",
         "container: node:22",
         "services:\n      db:\n        image: mysql",
-        "uses: ./.github/workflows/other.yml",
     ] {
         let error = load(&job_with(key)).unwrap_err();
         let name = key.split(':').next().unwrap();

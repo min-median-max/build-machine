@@ -4,6 +4,7 @@
 
 workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 push하기 전에 여기서 확인할 수 있습니다.
 
+- `uses: ./.github/workflows/<file>`로 같은 저장소의 재사용 workflow를 부르는 job은 그 자리에서 그 workflow의 job을 `<부르는 job>/<불린 job>` 이름으로 실행합니다. 불린 workflow는 `on: workflow_call`을 선언해야 하고, ref 재현은 그것을 그 ref에서 읽습니다. soksak registry의 `merge.yml`은 merge 뒤 `publish.yml`을 부르는데, 검증이 그 job을 거부했습니다.
 - `actions/upload-artifact`는 올린 파일을 이 Mac의 run artifact로 보관하고, `actions/download-artifact`는 run이나 `run-id`가 가리키는 이전 재현의 artifact를 `path`에 둡니다. 업로드는 제한 기록으로 대신되어 아무것도 보관하지 않았고 다운로드는 어댑터가 없었으므로, `workflow_run`으로 `validate.yml`을 잇는 soksak registry의 `merge.yml`이 검사한 pull request를 읽지 못했습니다. 비밀이나 token을 가리키는 `with` 값은 `env` 값처럼 더 이상 표현식으로 읽지 않습니다.
 - `actions/checkout`은 `repository` 없는 `ref`로 workflow 자신의 저장소를 commit된 기록에서 checkout하고, 표현식으로 준 `repository`를 재현의 `github` 값으로 읽습니다. soksak registry의 `validate.yml`은 pull request의 base commit과 head 저장소를, `publish.yml`은 `main`을 checkout하는데, 검증이 둘 다 거부했습니다.
 - `ci validate`와 `ci run`은 GitHub이 보내는 형태의 재현 event payload를 `--event-payload <file>`로 받습니다. 표현식은 거기서 `github.event.<path>`를 읽고, 단계는 그 파일을 `GITHUB_EVENT_PATH`로 받으며, payload가 없거나 workflow가 읽는 경로가 없으면 검증에서 실패합니다. soksak registry workflow는 어떤 재현도 줄 수 없던 `github.event.pull_request`와 `github.event.workflow_run`을 읽습니다.

@@ -178,6 +178,14 @@ skipped로 기록하고, 그 job을 기다리는 job은 `skipped`를 봅니다. 
 `needs.<job>.outputs`, 단계 출력과 그 밖의 context는 검증에서 실패합니다. 운영체제마다 따로 재현하므로 다른 운영체제의 job을
 `needs`로 기다릴 수 없습니다.
 
+**재사용 workflow** — `uses: ./.github/workflows/<file>`(그리고 `name`, `needs`,
+`permissions`만)을 쓴 job은 그 자리에서 같은 저장소의 그 workflow의 job을 실행합니다. 그
+workflow는 `on: workflow_call`을 선언해야 합니다. 그 job들은 `<부르는 job>/<불린 job>`으로
+이름 붙고, 그중 처음 job은 부르는 job의 `needs`를 기다리며, 부르는 job을 기다리는 job은 그
+job 모두를 기다리고, 부르는 쪽의 `github` 값을 봅니다. ref 재현은 불린 workflow를 그 ref에서
+읽습니다. 부르는 job의 `with`, `secrets`, `if`, 다른 저장소의 workflow, 4단계를 넘는 중첩은
+검증에서 실패합니다.
+
 **시간 제한** — job은 자신의 `timeout-minutes`, 선언이 없으면 GitHub의 360분 동안
 실행하고, 단계는 job에 남은 시간 안에서 자신의 `timeout-minutes`만큼 실행합니다. 그
 밖의 제한은 없습니다. 자신의 제한을 넘은 단계는 실패하고, 제한을 넘은 job은 GitHub처럼

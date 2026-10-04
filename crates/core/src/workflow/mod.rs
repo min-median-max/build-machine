@@ -133,9 +133,16 @@ pub fn load(path: &Path, event: &str, reference: Option<&str>) -> Result<Workflo
     Ok(workflow)
 }
 
-/// Read and validate workflow text that was extracted from an immutable ref.
-pub fn load_text(path: &str, source: &str, event: &str, reference: Option<&str>) -> Result<Workflow> {
-    let workflow = parse::parse(path, source, event, reference)?;
+/// Read and validate workflow text that was extracted from an immutable ref;
+/// `read` gives the text of a reusable workflow at that ref.
+pub fn load_text(
+    path: &str,
+    source: &str,
+    event: &str,
+    reference: Option<&str>,
+    read: &dyn Fn(&str) -> Result<String>,
+) -> Result<Workflow> {
+    let workflow = parse::parse_with(path, source, event, reference, read)?;
     check_gates(&workflow)?;
     Ok(workflow)
 }
