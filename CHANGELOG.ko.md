@@ -13,6 +13,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - build 단계가 없는 workflow는 test·smoke처럼 `# build-machine: skip build reason=...`로 이유를 밝힐 수 있습니다.
 - 단계 키 `shell`, `continue-on-error`, `timeout-minutes`와 어댑터가 반영하지 않는 setup action 입력은 버려지지 않고 검증에서 실패합니다. 스냅샷에는 Git 기록이 없으므로 `actions/checkout`의 `fetch-depth`는 제한으로 기록합니다.
 - README에 적힌 대로 `cargo xtask`가 동작합니다. 워크스페이스에 `xtask` alias가 없어서 `cargo xtask worker --os linux`, `cargo xtask test`, `cargo xtask build --run`이 "no such command"로 실패했습니다.
+- 개발 빌드는 자신을 컴파일한 워크스페이스를 사용합니다. `--root` 없이 실행한 `target/debug/build-machine`은 자기 위치에서 위로 찾다가 Tauri가 `target/debug`에 복사한 `machine.json`에서 멈췄고, `ci run`이 "The named build-machine share already belongs to another directory"로 실패했습니다. 워크스페이스 밖의 실행 파일은 이제 기본 root가 없고 `--root`를 요구합니다. 이전에는 명령줄이 현재 디렉터리로 대신했습니다.
 
 ## 0.1.0
 

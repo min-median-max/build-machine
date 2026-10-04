@@ -4,7 +4,7 @@
 //! controller library the desktop application also uses, so both drive exactly
 //! the same code.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use build_machine_controller::{
     controller_root, find_controller, matrix, printing_observer, snapshot, state_directory, Lock, Operation,
 };
@@ -164,7 +164,9 @@ fn execute() -> Result<()> {
     let cli = Cli::parse();
     let root = match &cli.root {
         Some(root) => controller_root(root)?,
-        None => controller_root(&find_controller().unwrap_or_else(|| PathBuf::from(".")))?,
+        None => controller_root(&find_controller().context(
+            "이 실행 파일은 자신을 빌드한 워크스페이스 밖에 있어요. --root로 machine.json이 있는 폴더를 지정해주세요.",
+        )?)?,
     };
     let machine = Machine::load(&root.join("machine.json"))?;
 

@@ -63,7 +63,23 @@ pub fn controller_root(value: &Path) -> Result<PathBuf> {
 /// application carries its payload instead and calls [`seed_root`].
 pub fn find_controller() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    exe.ancestors().find(|ancestor| ancestor.join("machine.json").is_file()).map(Path::to_path_buf)
+    development_root(&exe, Path::new(WORKSPACE))
+}
+
+/// The workspace this controller was compiled from.
+const WORKSPACE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+
+/// The controller root of a development build: the workspace that compiled
+/// it, which declares `machine.json`, when the executable runs from inside it.
+///
+/// The executable's own ancestors are not searched. Tauri copies the bundle's
+/// resources, `machine.json` and `workers/`, into the target directory beside
+/// the executables, so that search found `target/debug` first, while the
+/// Parallels share and the run records belong to the workspace.
+pub fn development_root(executable: &Path, workspace: &Path) -> Option<PathBuf> {
+    let workspace = workspace.canonicalize().ok()?;
+    let executable = executable.canonicalize().ok()?;
+    (executable.starts_with(&workspace) && workspace.join("machine.json").is_file()).then_some(workspace)
 }
 
 /// Prepare a writable controller root from a read-only payload.

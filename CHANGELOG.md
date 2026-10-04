@@ -13,6 +13,7 @@ Workflow replay runs a workflow the way a runner does, so a repository's CI can 
 - A workflow without a build step may say why with `# build-machine: skip build reason=...`, as for test and smoke.
 - The step keys `shell`, `continue-on-error` and `timeout-minutes`, and a setup action input its adapter does not honour, fail validation; they were dropped. A `fetch-depth` on `actions/checkout` is recorded as a limit, because the snapshot carries no Git history.
 - `cargo xtask` works as the README documents. The workspace declared no `xtask` alias, so `cargo xtask worker --os linux`, `cargo xtask test` and `cargo xtask build --run` failed with "no such command".
+- A development build drives the workspace that compiled it. Without `--root`, `target/debug/build-machine` searched upward from itself and stopped at the `machine.json` Tauri copies into `target/debug`, so `ci run` failed with "The named build-machine share already belongs to another directory". A binary outside its workspace now has no default root and asks for `--root`; the command line previously fell back to the current directory.
 
 ## 0.1.0
 
