@@ -16,6 +16,11 @@ pub enum Adapter {
     Cache,
     TauriBuild,
     ArtifactUpload,
+    /// `actions/upload-pages-artifact`: the site a later deploy-pages step
+    /// deploys.
+    PagesArtifact,
+    /// `actions/deploy-pages`: a recorded dry run that deploys nothing.
+    DeployPages,
     Release,
     /// A shell `run` step.
     #[default]
@@ -36,6 +41,8 @@ impl Adapter {
             Adapter::Cache => "cache",
             Adapter::TauriBuild => "tauri-build",
             Adapter::ArtifactUpload => "artifact-upload",
+            Adapter::PagesArtifact => "pages-artifact",
+            Adapter::DeployPages => "deploy-pages",
             Adapter::Release => "release",
             Adapter::Run => "run",
             Adapter::Skip => "skip",
@@ -57,7 +64,9 @@ impl Adapter {
             "dtolnay/rust-toolchain" => Adapter::RustSetup,
             "swatinem/rust-cache" | "actions/cache" => Adapter::Cache,
             "tauri-apps/tauri-action" => Adapter::TauriBuild,
-            "actions/upload-artifact" | "actions/upload-pages-artifact" => Adapter::ArtifactUpload,
+            "actions/upload-artifact" => Adapter::ArtifactUpload,
+            "actions/upload-pages-artifact" => Adapter::PagesArtifact,
+            "actions/deploy-pages" => Adapter::DeployPages,
             "softprops/action-gh-release" => Adapter::Release,
             _ => return None,
         })
@@ -78,7 +87,7 @@ impl Adapter {
             | Adapter::RustSetup
             | Adapter::Cache => "setup",
             Adapter::TauriBuild => "build",
-            Adapter::ArtifactUpload | Adapter::Release => "release",
+            Adapter::ArtifactUpload | Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release => "release",
             // A shell step is classified by its own name and command; a skip
             // marker is placed directly into the stage it stands for.
             Adapter::Run | Adapter::Skip => return None,
@@ -113,6 +122,12 @@ impl Adapter {
             Adapter::NodeSetup => &["node-version", "node-version-file", "cache", "cache-dependency-path"],
             Adapter::GoSetup => &["go-version", "go-version-file", "cache", "cache-dependency-path"],
             Adapter::PhpSetup => &["php-version", "php-version-file", "extensions", "tools", "coverage"],
+            // `retention-days` bounds how long GitHub keeps the artifact,
+            // which a replay does not keep past its run.
+            Adapter::PagesArtifact => &["path", "name", "retention-days"],
+            // `preview`, `token` and the timing inputs would deploy elsewhere
+            // or wait on GitHub's deployment.
+            Adapter::DeployPages => &["artifact_name"],
             _ => return None,
         })
     }
@@ -120,7 +135,7 @@ impl Adapter {
     /// Adapters that replace an external GitHub service and must be recorded as
     /// a limit rather than reported as a completed publication.
     pub fn is_external_service(&self) -> bool {
-        matches!(self, Adapter::ArtifactUpload | Adapter::Release)
+        matches!(self, Adapter::ArtifactUpload | Adapter::PagesArtifact | Adapter::DeployPages | Adapter::Release)
     }
 }
 

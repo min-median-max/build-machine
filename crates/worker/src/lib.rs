@@ -12,6 +12,7 @@ pub mod desktop;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod package;
+pub mod pages;
 pub mod provision;
 pub mod run;
 pub mod runner;

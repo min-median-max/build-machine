@@ -7,7 +7,7 @@ pub mod stage;
 
 pub use adapter::{Adapter, STAGE_ORDER};
 pub use condition::{ref_name, Condition, Github, JobStatus, Outputs, Reference, Template};
-pub use parse::{checkout_inputs, checkout_path, checkout_target, names_secret, reads_input, CheckoutTarget, Job, Step, Workflow, DEFAULT_JOB_TIMEOUT_MINUTES};
+pub use parse::{checkout_inputs, checkout_path, checkout_target, names_secret, reads_input, CheckoutTarget, Environment, Job, Step, Workflow, DEFAULT_JOB_TIMEOUT_MINUTES};
 pub use stage::{check_gates, jobs_for, stage_counts, stage_of, stages, stages_for};
 
 use crate::Platform;

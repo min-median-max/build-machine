@@ -110,9 +110,15 @@ PowerShell은 모든 줄을 실행하고 마지막 종료 코드만 보고하므
 `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`,
 `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
 `tauri-apps/tauri-action`, `actions/upload-artifact`,
-`actions/upload-pages-artifact`, `softprops/action-gh-release`. action의 owner와
-이름은 GitHub처럼 대소문자를 구분하지 않습니다. setup action의 `with` 입력 중
-어댑터가 반영하지 않는 것은 검증에서 실패합니다.
+`actions/upload-pages-artifact`, `actions/deploy-pages`,
+`softprops/action-gh-release`. action의 owner와 이름은 GitHub처럼 대소문자를 구분하지
+않습니다. setup action의 `with` 입력 중 어댑터가 반영하지 않는 것은 검증에서 실패하며,
+pages action도 업로드의 `path`, `name`, `retention-days`와 배포의 `artifact_name` 외의
+입력은 실패합니다. 업로드는 단계가 실행될 때의 사이트를 재현이 끝날 때까지 보관합니다.
+deploy-pages는 아무것도 배포하지 않고 그 산출물의 파일을 크기, SHA-256과 함께 결과의
+`deployments`에 dry run으로 기록하며, 재현에서 앞서 업로드한 pages 산출물이 없으면
+실패합니다. job의 `environment`(식 없는 이름 또는 `{name, url}`)는 제한으로 기록하며
+로컬에는 영향이 없습니다.
 
 셸 `run` 단계는 쓰인 그대로, runner처럼 Linux와 macOS에서는 `bash -e`로,
 Windows에서는 PowerShell로 실행합니다. 단계는 workflow 순서대로 실행합니다. 각 단계는
@@ -151,7 +157,7 @@ job마다 `$GITHUB_ENV`, `$GITHUB_PATH`, 상태를 따로 두고, job은 `needs`
 출력은 GitHub runner처럼 5초 더 읽고, 그 프로세스는 그대로 둡니다.
 
 **지원하지 않는 것** — 컨테이너, 서비스, 재사용 workflow, `strategy`, 그 밖의 job 키
-(`if`, `continue-on-error`, `defaults`, `outputs`, `environment` 등), workflow
+(`if`, `continue-on-error`, `defaults`, `outputs`, `permissions` 등), workflow
 `defaults`, 어댑터가 없는 action, 단계 키 `shell`, `continue-on-error`. 검증에서
 실패합니다.
 

@@ -9,6 +9,15 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 > edited to describe the Rust implementation, which would make it false. What the
 > Rust rewrite has and has not been shown to do is directly below.
 
+## Pages deployment and job environment — 2026-10-04
+
+Platform: macOS 26.6.2 arm64 (no VM and no `ci run`).
+
+- Red, against B3 (`3d6ae63`): `cargo test -p build-machine-core --locked --test workflow` failed 3 of 30 with `job publish의 'environment'는 아직 지원하지 않아요.`: `a_pages_deployment_and_its_environment_pass_validation` (`called Result::unwrap() on an Err value`), `an_environment_without_a_literal_name_fails_validation` and `a_deploy_pages_input_it_does_not_honour_fails_validation` (message assertions). `crates/worker/tests/pages.rs` did not compile: `error[E0432]: unresolved import build_machine_worker::pages`.
+- `a_job_key_the_replay_does_not_implement_fails_closed` (crates/core/tests/job.rs) listed `environment: production` as refused; it is now among the accepted keys, as this change defines.
+- Green: core workflow 30/30, worker pages 3/3 (the deployment lists the files as uploaded, without `.git`, with sizes and SHA-256; a deployment without an upload, a missing upload path and a second upload of one name fail). `cargo test --workspace --locked` passed 127 tests; `cargo clippy --workspace --all-targets --locked -- -D warnings` passed. The worker wiring (the step adapters, the environment limit and `deployments` in the result) has no test of its own; it is exercised by a replay.
+- `ci validate` of the registry `.github/workflows/publish.yml` (`261104c4370f3e7fdb14eedb8b9b30077aa5e9e1`, dirty), `--event push --os macos`, returned `"status": "valid"` with stages build 2, release 2, setup 9, smoke 1, test 1 and the six soksak repositories.
+
 ## Own checkout into a path — 2026-10-04
 
 Platform: macOS 26.6.2 arm64 (no VM and no `ci run`).

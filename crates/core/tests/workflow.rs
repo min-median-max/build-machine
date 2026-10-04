@@ -641,3 +641,71 @@ fn any_other_github_value_still_fails_validation() {
         assert!(format!("{error:#}").contains(&format!("Unsupported workflow context: github.{name}")), "{name}: {error:#}");
     }
 }
+
+/// The registry's publish job deploys `site` to GitHub Pages in the
+/// `github-pages` environment.
+fn pages(environment: &str, deploy: &str) -> String {
+    format!(
+        r#"# build-machine: skip test reason=fixture
+# build-machine: skip smoke reason=fixture
+name: publish
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+jobs:
+  publish:
+    runs-on: macos-15
+{environment}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the index
+        run: mkdir site && cp index.json site/index.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+{deploy}
+"#
+    )
+}
+
+#[test]
+fn a_pages_deployment_and_its_environment_pass_validation() {
+    for environment in ["    environment: github-pages", "    environment:\n      name: github-pages\n      url: https://soksak.app"] {
+        let (_directory, path) = write(&pages(environment, ""));
+        let parsed = workflow::load(&path, "push", None).unwrap();
+        let job = serde_json::to_value(&parsed.jobs[0]).unwrap();
+        assert_eq!(job["environment"]["name"], "github-pages", "{job:#}");
+        let adapters: Vec<&str> = parsed.jobs[0].steps.iter().map(|step| step.adapter.as_str()).collect();
+        assert_eq!(adapters, ["checkout", "run", "pages-artifact", "deploy-pages"]);
+    }
+}
+
+/// The environment is recorded by name, so it has to be one; an expression
+/// has no value before the job runs.
+#[test]
+fn an_environment_without_a_literal_name_fails_validation() {
+    for (environment, expected) in [
+        ("    environment:\n      url: https://soksak.app", "environment의 name"),
+        ("    environment: ${{ steps.a.outputs.name }}", "environment의 name"),
+        ("    environment:\n      name: github-pages\n      url: ${{ steps.deployment.outputs.page_url }}", "environment의 url"),
+        ("    environment:\n      name: github-pages\n      deployment: false", "deployment"),
+    ] {
+        let (_directory, path) = write(&pages(environment, ""));
+        let error = workflow::load(&path, "push", None).unwrap_err();
+        assert!(format!("{error:#}").contains(expected), "{environment}: {error:#}");
+    }
+}
+
+/// `preview` deploys somewhere else; an input the stand-in does not honour
+/// fails validation.
+#[test]
+fn a_deploy_pages_input_it_does_not_honour_fails_validation() {
+    let (_directory, path) = write(&pages("    environment: github-pages", "        with:\n          preview: true"));
+    let error = workflow::load(&path, "push", None).unwrap_err();
+    assert!(format!("{error:#}").contains("'preview'"), "{error:#}");
+}

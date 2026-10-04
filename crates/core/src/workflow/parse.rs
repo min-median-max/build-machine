@@ -64,11 +64,45 @@ pub struct Job {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
+    /// The job's `environment`. It has no local effect: a replay records it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<Environment>,
     /// Whether an expression of the job reads `github.ref` or
     /// `github.ref_name`, which a replay of a commit without a branch or tag
     /// name cannot give.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reads_ref: bool,
+}
+
+/// A job's deployment environment, given as a name or as `{name, url}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Environment {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// A job's `environment`. The name and the URL are recorded as written, so an
+/// expression, which has no value before the job runs, is refused.
+fn environment(value: Option<&Yaml>, job: &str) -> Result<Option<Environment>> {
+    let literal = |value: Option<String>, key: &str| -> Result<Option<String>> {
+        match value {
+            Some(text) if text.contains("${{") => bail!("job {job}의 environment의 {key}에는 식을 쓸 수 없어요: {text}"),
+            other => Ok(other),
+        }
+    };
+    let Some(value) = value else { return Ok(None) };
+    let (name, url) = match value {
+        Yaml::Mapping(_) => {
+            check_keys(value, &["name", "url"], &format!("job {job}의 environment"))?;
+            (text(get(value, "name")), text(get(value, "url")))
+        }
+        other => (text(Some(other)), None),
+    };
+    let name = literal(name, "name")?
+        .filter(|name| !name.trim().is_empty())
+        .with_context(|| format!("job {job}의 environment의 name이 필요해요."))?;
+    Ok(Some(Environment { name, url: literal(url, "url")? }))
 }
 
 /// GitHub's limit for a job that declares no `timeout-minutes`.
@@ -132,11 +166,12 @@ fn declared_events(document: &Yaml) -> Vec<String> {
 /// validation rather than being dropped.
 const STEP_KEYS: [&str; 9] = ["name", "id", "uses", "run", "with", "env", "if", "working-directory", "timeout-minutes"];
 
-/// The job keys a replay implements. `if`, `continue-on-error`, `strategy`,
-/// `defaults`, `outputs`, `environment`, containers, services and reusable
+/// The job keys a replay implements. `environment` is recorded and has no
+/// local effect. `if`, `continue-on-error`, `strategy`, `defaults`,
+/// `outputs`, `permissions`, containers, services and reusable
 /// workflows each change which steps GitHub runs or how, so any other key
 /// fails validation.
-const JOB_KEYS: [&str; 6] = ["name", "runs-on", "needs", "env", "steps", "timeout-minutes"];
+const JOB_KEYS: [&str; 7] = ["name", "runs-on", "needs", "env", "steps", "timeout-minutes", "environment"];
 
 /// The workflow keys a replay implements. `permissions` and `concurrency`
 /// only govern the GitHub token and overlapping runs, neither of which a
@@ -502,8 +537,9 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
         env.extend(string_map(get(value, "env")));
         let timeout_minutes =
             timeout_minutes(get(value, "timeout-minutes"), &format!("job {id}"))?.unwrap_or(DEFAULT_JOB_TIMEOUT_MINUTES);
+        let environment = environment(get(value, "environment"), &id)?;
         let (steps, reads_ref) = parse_steps(&id, &env, get(value, "steps"))?;
-        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps, reads_ref });
+        jobs.push(Job { id, runs_on, needs, timeout_minutes, env, steps, environment, reads_ref });
     }
     // Each platform replays its own jobs, so a job can only wait for a job
     // that is replayed wherever it is.

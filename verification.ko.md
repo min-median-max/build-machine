@@ -8,6 +8,15 @@
 > 그 실행들의 기록으로 남겨 두며, Rust 구현을 설명하도록 고쳐 쓰지 않습니다. 그렇게 하면
 > 기록이 거짓이 됩니다. Rust 재작성이 무엇을 보였고 무엇을 보이지 않았는지는 바로 아래에 있습니다.
 
+## Pages 배포와 job environment — 2026-10-04
+
+플랫폼: macOS 26.6.2 arm64 (VM과 `ci run`은 실행하지 않음).
+
+- Red, B3(`3d6ae63`)에서: `cargo test -p build-machine-core --locked --test workflow`가 30건 중 3건 `job publish의 'environment'는 아직 지원하지 않아요.`로 실패했습니다: `a_pages_deployment_and_its_environment_pass_validation`(`called Result::unwrap() on an Err value`), `an_environment_without_a_literal_name_fails_validation`, `a_deploy_pages_input_it_does_not_honour_fails_validation`(메시지 assertion). `crates/worker/tests/pages.rs`는 `error[E0432]: unresolved import build_machine_worker::pages`로 컴파일되지 않았습니다.
+- `a_job_key_the_replay_does_not_implement_fails_closed`(crates/core/tests/job.rs)는 `environment: production`을 거부 대상으로 두었습니다. 이 변경의 정의대로 이제 받는 키에 있습니다.
+- Green: core workflow 30/30, worker pages 3/3(배포 기록은 업로드한 그대로의 파일을 `.git` 없이 크기·SHA-256과 함께 나열하고, 업로드 없는 배포·없는 업로드 경로·같은 이름의 두 번째 업로드는 실패). `cargo test --workspace --locked`가 127건을 통과했고 `cargo clippy --workspace --all-targets --locked -- -D warnings`가 통과했습니다. worker 연결(단계 어댑터, environment 제한, 결과의 `deployments`)에는 자체 test가 없으며 재현에서 실행됩니다.
+- registry `.github/workflows/publish.yml`(`261104c4370f3e7fdb14eedb8b9b30077aa5e9e1`, dirty)의 `ci validate`(`--event push --os macos`)는 `"status": "valid"`, stage build 2, release 2, setup 9, smoke 1, test 1과 soksak 저장소 여섯 개를 반환했습니다.
+
 ## 자신의 저장소를 path에 checkout — 2026-10-04
 
 플랫폼: macOS 26.6.2 arm64 (VM과 `ci run`은 실행하지 않음).

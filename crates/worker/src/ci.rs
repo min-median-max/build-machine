@@ -247,6 +247,7 @@ fn worst(left: Outcome, right: Outcome) -> Outcome {
 #[allow(clippy::too_many_arguments)]
 fn execute(
     step: &Step,
+    job: &Job,
     limit: Option<Duration>,
     source: &Path,
     request: &WorkRequest,
@@ -254,6 +255,7 @@ fn execute(
     tools: &Tools,
     runner: &mut Runner,
     result: &mut PlatformResult,
+    pages: &Path,
 ) -> Result<Ran> {
     let files = runner.begin_step(step.position)?;
     let (environment, limits) = step_environment(&runner.environment(base, &files), step);
@@ -296,6 +298,39 @@ fn execute(
             ran
         }
         adapter if adapter.is_local_stand_in() => Ran::new(Outcome::Passed),
+        Adapter::PagesArtifact => {
+            let name = step.with.get("name").map(String::as_str).unwrap_or("github-pages");
+            let path = step.with.get("path").map(String::as_str).unwrap_or("_site/");
+            let count = crate::pages::upload(source, path, pages, name)?;
+            let summary = format!("Kept {count} files of {path} as the pages artifact {name} for this replay.");
+            println!("{summary}");
+            result.limits.push(format!("{}: the pages artifact {name} is kept for this replay and not uploaded to GitHub.", step.name));
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.output = Some(summary);
+            ran
+        }
+        Adapter::DeployPages => {
+            let name = step.with.get("artifact_name").map(String::as_str).unwrap_or("github-pages");
+            let files = crate::pages::deploy(pages, name)?;
+            let mut summary = format!("dry-run: not deployed. The pages artifact {name} holds {} files:", files.len());
+            for file in &files {
+                summary.push_str(&format!("\n{} {} {}", file.sha256, file.size, file.path));
+            }
+            println!("{summary}");
+            result.limits.push(format!(
+                "{}: dry-run: not deployed. The files of the pages artifact {name} are recorded in deployments.",
+                step.name
+            ));
+            result.deployments.push(build_machine_core::report::Deployment {
+                job: job.id.clone(),
+                environment: job.environment.clone(),
+                artifact: name.to_owned(),
+                files,
+            });
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.output = Some(summary);
+            ran
+        }
         adapter if adapter.is_external_service() => {
             result.limits.push(format!("{}: external GitHub service replaced by local artifact store", step.name));
             Ran::new(Outcome::PassedWithLimits)
@@ -391,6 +426,7 @@ fn run_job(
     stages: &mut BTreeMap<&'static str, Stage>,
     failure: &mut Option<String>,
     github: &Github,
+    pages: &Path,
 ) -> Result<JobStatus> {
     let job_limit = Duration::from_secs(job.timeout_minutes * 60);
     let started = Instant::now();
@@ -431,7 +467,9 @@ fn run_job(
             // just before it runs.
             let ran = step
                 .resolve(runner.outputs(), github)
-                .and_then(|resolved| execute(&resolved, limit, source, request, base, tools, &mut runner, result));
+                .and_then(|resolved| {
+                    execute(&resolved, job, limit, source, request, base, tools, &mut runner, result, pages)
+                });
             let mut ran = match ran {
                 Ok(ran) => ran,
                 // An adapter that cannot do its work fails its step, and the
@@ -553,6 +591,12 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     let event = request.snapshot.event.as_deref().context("요청에 workflow event가 없어요.")?;
     let github =
         github_context(&request.jobs, event, &request.snapshot.revision, request.snapshot.checkout_ref.as_deref())?;
+    // Pages artifacts live for one replay, as an artifact lives for one run.
+    let pages = directory.join("pages");
+    if pages.exists() {
+        std::fs::remove_dir_all(&pages)
+            .with_context(|| format!("이전 pages 산출물을 지우지 못했어요: {}", pages.display()))?;
+    }
     for job in &request.jobs {
         // A job runs when every job it needs succeeded, as GitHub's default
         // job condition `success()` reads it.
@@ -578,6 +622,13 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
                 result.limits.push(format!("Runner image {} {}: not provided: {missing}", image.runner, image.version));
             }
         }
+        if let Some(environment) = &job.environment {
+            let url = environment.url.as_deref().map(|url| format!(" ({url})")).unwrap_or_default();
+            result.limits.push(format!(
+                "job {} environment {}{url}: recorded only; its protection rules, secrets and deployment record have no local effect.",
+                job.id, environment.name
+            ));
+        }
         // Every job starts in an empty workspace; actions/checkout fills it.
         if workspace.exists() {
             std::fs::remove_dir_all(&workspace)
@@ -590,7 +641,7 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             runner.set(key, &value);
         }
         let status =
-            run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure, &github)?;
+            run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure, &github, &pages)?;
         finished.insert(job.id.as_str(), status);
         #[cfg(target_os = "linux")]
         for process in crate::runner::terminate_orphans(&tracking) {

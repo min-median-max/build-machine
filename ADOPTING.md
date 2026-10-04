@@ -119,9 +119,17 @@ validation rather than being quietly changed into something else.
 `actions/setup-node`, `actions/setup-go`, `shivammathur/setup-php`,
 `dtolnay/rust-toolchain`, `swatinem/rust-cache`, `actions/cache`,
 `tauri-apps/tauri-action`, `actions/upload-artifact`,
-`actions/upload-pages-artifact`, `softprops/action-gh-release`. An action's
-owner and name match without regard to case, as on GitHub. A setup action's
-`with` input that its adapter does not honour fails validation.
+`actions/upload-pages-artifact`, `actions/deploy-pages`,
+`softprops/action-gh-release`. An action's owner and name match without regard
+to case, as on GitHub. A setup action's `with` input that its adapter does not
+honour fails validation, as do the pages actions' inputs other than `path`,
+`name` and `retention-days` for the upload and `artifact_name` for the
+deployment. The upload keeps the site as it was when the step ran for the rest
+of the replay; deploy-pages deploys nothing and records that artifact's files
+with their sizes and SHA-256 in the result's `deployments` as a dry run, and
+fails when no pages artifact was uploaded earlier in the replay. A job's
+`environment`, a name or `{name, url}` without expressions, is recorded as a
+limit and has no local effect.
 
 Shell `run` steps execute as written, in `bash -e` on Linux and macOS as a
 runner runs them, and in PowerShell on Windows. Steps run in workflow order.
@@ -168,8 +176,8 @@ for five more seconds, as GitHub's runner does, and the process is left
 running.
 
 **Not supported** — containers, services, reusable workflows, `strategy`, any
-other job key (`if`, `continue-on-error`, `defaults`, `outputs`, `environment`,
-…), workflow `defaults`, any action without an adapter, and the step keys
+other job key (`if`, `continue-on-error`, `defaults`, `outputs`,
+`permissions`, …), workflow `defaults`, any action without an adapter, and the step keys
 `shell` and `continue-on-error`. These fail validation.
 
 **Expressions** — an `if:` may use `success()`, `failure()`, `always()`,

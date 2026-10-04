@@ -122,6 +122,21 @@ pub struct PlatformResult {
     pub executable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signing: Option<String>,
+    /// What `actions/deploy-pages` would have deployed. Nothing is deployed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deployments: Vec<Deployment>,
+}
+
+/// A deployment a replay recorded and did not make: the job, its
+/// environment, the artifact and that artifact's files.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Deployment {
+    pub job: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<crate::workflow::Environment>,
+    pub artifact: String,
+    pub files: Vec<Artifact>,
 }
 
 impl PlatformResult {
@@ -138,6 +153,7 @@ impl PlatformResult {
             limits: Vec::new(),
             executable: None,
             signing: None,
+            deployments: Vec::new(),
         }
     }
 
