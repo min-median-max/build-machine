@@ -109,6 +109,10 @@ impl Parallels {
     /// Without `--current-user`, `prlctl exec` runs as the guest's own
     /// privileged account: SYSTEM on Windows, root on Linux.
     fn exec(&self, arguments: &[String], log: &OperationLog, as_user: bool) -> Result<String> {
+        exec_with_retry(&mut || self.exec_command(arguments, as_user), log)
+    }
+
+    fn exec_command(&self, arguments: &[String], as_user: bool) -> Result<Command> {
         let placement = self.placement()?;
         let mut command = Command::new(&self.prlctl);
         command.arg("exec").arg(&self.vm);
@@ -122,14 +126,14 @@ impl Parallels {
                 // desktop login. Its root channel lets runuser select the
                 // declared Linux account without storing a password.
                 command.arg(format!("runuser -l {} -c {}", shell_quote(user), shell_quote(&script)));
-                return stream_command(command, log);
+                return Ok(command);
             }
         }
         if as_user {
             command.arg("--current-user");
         }
         command.arg(&placement.worker).args(arguments).arg("--config").arg(&placement.config);
-        stream_command(command, log)
+        Ok(command)
     }
 
     fn cli(&self, arguments: &[&str]) -> Result<String> {
@@ -242,6 +246,80 @@ pub fn prlctl_path() -> Result<PathBuf> {
     bail!("Parallels prlctl is missing. Install and activate Parallels Desktop with CLI support first.")
 }
 
+/// A command that ran and exited unsuccessfully, with its output.
+#[derive(Debug)]
+pub struct CommandFailed {
+    pub code: Option<i32>,
+    pub output: String,
+}
+
+impl std::fmt::Display for CommandFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tail: String = self.output.chars().rev().take(2500).collect::<Vec<_>>().into_iter().rev().collect();
+        write!(formatter, "Worker failed with exit code {}.\n{tail}", self.code.unwrap_or(-1))
+    }
+}
+
+impl std::error::Error for CommandFailed {}
+
+/// How many times a guest command Parallels did not start is started.
+pub const GUEST_EXEC_ATTEMPTS: u32 = 5;
+
+/// `prlctl exec` gave up before the guest command started, every time.
+#[derive(Debug)]
+pub struct GuestExecNotStarted {
+    pub attempts: u32,
+    pub message: String,
+}
+
+impl std::fmt::Display for GuestExecNotStarted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Parallels did not start the guest command in {} attempts: {}. This is prlctl exec of Parallels 27 failing before the command runs, not a failure of the command.",
+            self.attempts, self.message
+        )
+    }
+}
+
+impl std::error::Error for GuestExecNotStarted {}
+
+/// Parallels 27's `prlctl exec` intermittently exits 255 with nothing but
+/// `PrlJob_GetRetCode: Invalid argument` or `PrlJob_GetResult: Invalid
+/// argument` before the guest command starts. That message, alone, is this
+/// failure; any other output means the command ran.
+pub fn exec_not_started(code: Option<i32>, output: &str) -> Option<String> {
+    let lines: Vec<&str> = output.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let only_prljob = !lines.is_empty()
+        && lines.iter().all(|line| line.starts_with("PrlJob_") && line.contains("Invalid argument"));
+    (code == Some(255) && only_prljob).then(|| lines.join(" "))
+}
+
+/// Run a guest command, starting it again when Parallels did not start it.
+///
+/// Measured on 2026-10-04 against Parallels 27.0.2: 18 of 150 `prlctl exec`
+/// calls failed that way and none of their commands had run, so starting one
+/// again does not repeat its effect. A command that failed after it started
+/// is never run again. Each attempt that did not start is logged.
+pub fn exec_with_retry(build: &mut dyn FnMut() -> Result<Command>, log: &OperationLog) -> Result<String> {
+    let mut message = String::new();
+    for attempt in 1..=GUEST_EXEC_ATTEMPTS {
+        match stream_command(build()?, log) {
+            Ok(output) => return Ok(output),
+            Err(error) => {
+                let not_started =
+                    error.downcast_ref::<CommandFailed>().and_then(|failed| exec_not_started(failed.code, &failed.output));
+                let Some(not_started) = not_started else { return Err(error) };
+                log.note(&format!(
+                    "PARALLELS did not start the guest command (attempt {attempt}/{GUEST_EXEC_ATTEMPTS}): {not_started}"
+                ));
+                message = not_started;
+            }
+        }
+    }
+    Err(GuestExecNotStarted { attempts: GUEST_EXEC_ATTEMPTS, message }.into())
+}
+
 /// Run a command, mirroring its output to the operation log and this process.
 fn stream_command(mut command: Command, log: &OperationLog) -> Result<String> {
     let display = format!("{:?}", command).replace('"', "");
@@ -260,8 +338,7 @@ fn stream_command(mut command: Command, log: &OperationLog) -> Result<String> {
     let output = captured.lock().unwrap().clone();
     log.exit_code(status.code().unwrap_or(-1));
     if !status.success() {
-        let tail: String = output.chars().rev().take(2500).collect::<Vec<_>>().into_iter().rev().collect();
-        bail!("Worker failed with exit code {}.\n{tail}", status.code().unwrap_or(-1));
+        return Err(CommandFailed { code: status.code(), output }.into());
     }
     Ok(output)
 }
