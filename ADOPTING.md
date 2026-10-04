@@ -139,7 +139,8 @@ the files each line of `files` matches, with their sizes and SHA-256, and the
 and `?` within one path segment; other glob forms fail the step, and a pattern
 that matches no file is named in the output, as the action warns about it.
 Inputs other than `files`, `body_path` and `tag_name` fail validation. A job's
-`environment`, a name or `{name, url}` without expressions, is recorded as a
+`environment`, a name or `{name, url}` whose name has no expression and whose
+url may read the job's step outputs (recorded as written), is recorded as a
 limit and has no local effect.
 
 Shell `run` steps execute as written, in `bash -e` on Linux and macOS as a

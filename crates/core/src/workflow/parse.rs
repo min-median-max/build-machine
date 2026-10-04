@@ -106,7 +106,9 @@ fn environment(value: Option<&Yaml>, job: &str) -> Result<Option<Environment>> {
     let name = literal(name, "name")?
         .filter(|name| !name.trim().is_empty())
         .with_context(|| format!("job {job}의 environment의 name이 필요해요."))?;
-    Ok(Some(Environment { name, url: literal(url, "url")? }))
+    // GitHub evaluates the URL after the job's steps; it is checked against
+    // them once they are read, and recorded as written.
+    Ok(Some(Environment { name, url }))
 }
 
 /// GitHub's limit for a job that declares no `timeout-minutes`.
@@ -547,6 +549,16 @@ pub fn parse(path: &str, source: &str, event: &str, reference: Option<&str>) -> 
             timeout_minutes(get(value, "timeout-minutes"), &format!("job {id}"))?.unwrap_or(DEFAULT_JOB_TIMEOUT_MINUTES);
         let environment = environment(get(value, "environment"), &id)?;
         let (steps, mut reads_ref) = parse_steps(&id, &env, get(value, "steps"))?;
+        if let Some(url) = environment.as_ref().and_then(|environment| environment.url.as_deref()) {
+            let owner = format!("job {id}의 environment의 url");
+            let template = Template::parse(url).with_context(|| owner.clone())?;
+            if let Some(reference) = template.references().into_iter().find(|reference| {
+                !steps.iter().any(|step| step.id.as_deref() == Some(reference.step.as_str()))
+            }) {
+                bail!("{owner}: steps.{}.outputs.{}의 {}는 이 job의 단계 id가 아니에요.", reference.step, reference.output, reference.step);
+            }
+            reads_ref |= template.reads_ref();
+        }
         // A job's `if` reads the github context and the results of the jobs
         // it needs; it runs before any step, so no step output exists yet.
         let condition = text(get(value, "if"));

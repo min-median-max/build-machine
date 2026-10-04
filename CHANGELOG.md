@@ -45,6 +45,7 @@ Workflow replay runs a workflow the way a runner does, so a repository's CI can 
 - The controller stops the Linux VM for offline compaction only when the Mac has room to start it again: free space for the VM's memory plus 1024 MB. Otherwise it keeps the VM running, logs both numbers and records in the result that only the guest's free blocks were discarded. A VM that was stopped and did not start is reported as such. The VM had been left stopped when Parallels refused to start it for lack of disk space.
 - A replay job runs in the runner's layout under the home directory: `GITHUB_WORKSPACE` is `$HOME/work/<repository>/<repository>`, `RUNNER_WORKSPACE` `$HOME/work/<repository>`, and the runner's files and `RUNNER_TEMP` are under `$HOME/work/_temp`. Run records and artifacts stay in the project's directory. The workspace under the worker's state directory was about 85 characters long, and orm's MySQL socket under it passed the 107-byte limit of a unix socket path.
 - A job's `if:` and `permissions` are accepted. The `if` is read as GitHub reads it: status functions over the jobs before the job, `needs.<job>.result`, and the replay's `github` values, with `success()` as the default; a job that does not run is recorded as skipped with the reason. orm's docs-pages.yml failed validation on its deploy job's `if`.
+- A job environment's `url` may read the outputs of the job's steps, as orm's deploy job reads `${{ steps.deployment.outputs.page_url }}`; validation checks the step exists, and the URL is recorded as written.
 
 ## 0.1.0
 

@@ -45,6 +45,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - 컨트롤러는 Mac에 Linux VM을 다시 시작할 공간(VM 메모리에 1024 MB를 더한 여유 공간)이 있을 때만 오프라인 압축을 위해 VM을 멈춥니다. 공간이 없으면 VM을 계속 실행하고, 두 수치를 로그에 남기고, 게스트의 빈 블록만 discard했다고 결과에 기록합니다. 멈췄다가 시작하지 못한 VM은 그대로 보고합니다. 이전에는 Parallels가 디스크 공간 부족으로 시작을 거부해 VM이 멈춘 채 남았습니다.
 - 재현 job은 홈 디렉터리 아래 runner와 같은 배치에서 실행합니다. `GITHUB_WORKSPACE`는 `$HOME/work/<저장소>/<저장소>`, `RUNNER_WORKSPACE`는 `$HOME/work/<저장소>`이고, runner 파일과 `RUNNER_TEMP`는 `$HOME/work/_temp` 아래에 둡니다. 실행 기록과 산출물은 프로젝트 디렉터리에 그대로 둡니다. 워커 상태 디렉터리 아래의 workspace는 약 85자였고, 그 아래의 orm MySQL 소켓이 unix 소켓 경로의 107 byte 제한을 넘었습니다.
 - job의 `if:`와 `permissions`를 받습니다. `if`는 GitHub처럼 읽습니다. 앞선 job들에 대한 상태 함수, `needs.<job>.result`, 재현의 `github` 값을 읽고 기본값은 `success()`입니다. 실행하지 않은 job은 이유와 함께 skipped로 기록합니다. orm의 docs-pages.yml은 deploy job의 `if` 때문에 검증에서 실패했습니다.
+- job environment의 `url`은 orm의 deploy job이 `${{ steps.deployment.outputs.page_url }}`을 읽듯 그 job 단계의 출력을 읽을 수 있습니다. 검증은 그 단계가 있는지 확인하고, URL은 쓰인 그대로 기록합니다.
 
 ## 0.1.0
 

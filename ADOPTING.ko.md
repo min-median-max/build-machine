@@ -124,7 +124,7 @@ deploy-pages는 아무것도 배포하지 않고 그 산출물의 파일을 크�
 맞는 파일을 크기, SHA-256과 함께, `body_path` 파일과 같이 단계 출력에 dry run으로
 기록합니다. `files` 패턴은 한 경로 조각 안의 `*`와 `?`만 쓰고, 다른 glob 형식은 단계를
 실패시키며, 아무 파일에도 맞지 않는 패턴은 action이 경고하듯 출력에 밝힙니다.
-`files`, `body_path`, `tag_name` 외의 입력은 검증에서 실패합니다. job의 `environment`(식 없는 이름 또는 `{name, url}`)는 제한으로 기록하며
+`files`, `body_path`, `tag_name` 외의 입력은 검증에서 실패합니다. job의 `environment`(식 없는 이름, 또는 이름에는 식이 없고 url은 job 단계의 출력을 읽을 수 있는 `{name, url}`, url은 쓰인 그대로 기록)는 제한으로 기록하며
 로컬에는 영향이 없습니다.
 
 셸 `run` 단계는 쓰인 그대로, runner처럼 Linux와 macOS에서는 `bash -e`로,

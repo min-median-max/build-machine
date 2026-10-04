@@ -81,3 +81,25 @@ fn a_job_condition_without_a_local_value_fails_validation_naming_it() {
     .unwrap_err();
     assert!(format!("{error:#}").contains("needs.build.result"), "{error:#}");
 }
+
+/// orm's deploy job names its environment's URL from the deploy step's output,
+/// `${{ steps.deployment.outputs.page_url }}`, which GitHub evaluates after the
+/// job's steps. The environment has no local effect; its URL is recorded as
+/// written, and validation checks that the step exists in the job.
+#[test]
+fn an_environment_url_may_read_an_output_of_the_job_s_steps() {
+    let job = |url: &str| {
+        format!(
+            "{BUILD}  deploy:\n    needs: build\n    runs-on: ubuntu-26.04-arm\n    environment:\n      name: github-pages\n      url: {url}\n    steps:\n      - name: Deploy static documentation\n        id: deployment\n        run: echo deploy\n"
+        )
+    };
+    let parsed = load(&job("${{ steps.deployment.outputs.page_url }}")).unwrap();
+    let deploy = parsed.jobs.iter().find(|job| job.id == "deploy").unwrap();
+    assert_eq!(deploy.environment.as_ref().unwrap().url.as_deref(), Some("${{ steps.deployment.outputs.page_url }}"));
+    for (url, expected) in [("${{ steps.missing.outputs.page_url }}", "missing"), ("${{ github.actor }}", "github.actor")] {
+        let error = load(&job(url)).unwrap_err();
+        assert!(format!("{error:#}").contains(expected), "{url}: {error:#}");
+    }
+    let named = load(&job("x").replace("name: github-pages", "name: ${{ github.ref_name }}")).unwrap_err();
+    assert!(format!("{named:#}").contains("name"), "{named:#}");
+}

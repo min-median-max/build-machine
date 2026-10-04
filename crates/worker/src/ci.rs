@@ -771,7 +771,11 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             }
         }
         if let Some(environment) = &job.environment {
-            let url = environment.url.as_deref().map(|url| format!(" ({url})")).unwrap_or_default();
+            let url = match environment.url.as_deref() {
+                Some(url) if url.contains("${{") => format!(" ({url}, as written: GitHub evaluates it after the job's steps)"),
+                Some(url) => format!(" ({url})"),
+                None => String::new(),
+            };
             result.limits.push(format!(
                 "job {} environment {}{url}: recorded only; its protection rules, secrets and deployment record have no local effect.",
                 job.id, environment.name
