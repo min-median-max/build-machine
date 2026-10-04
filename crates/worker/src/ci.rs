@@ -682,5 +682,6 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     // The seeded limit is always present, so a replay is never plain `passed`.
     result.status = Outcome::PassedWithLimits;
     result.success = true;
+    result.require_executed_steps();
     Ok(result)
 }

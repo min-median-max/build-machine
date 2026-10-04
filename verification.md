@@ -9,6 +9,13 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 > edited to describe the Rust implementation, which would make it false. What the
 > Rust rewrite has and has not been shown to do is directly below.
 
+## A replay that ran no step — 2026-10-04
+
+Platform: macOS 26.6.2 arm64 (no VM).
+
+- Red, against B5 (`b13a25c`): `cargo test -p build-machine-controller --locked --test worker` failed `a_replay_that_ran_no_step_fails_the_platform`: a fake worker that answers the controller's protocol and reports a success with no step gave `success: true`, `status: PassedWithLimits`, `error: None`. `crates/core/tests/report.rs` did not compile: `error[E0599]: no method named executed_steps found for struct PlatformResult`.
+- Green: core report 1/1, controller worker 2/2. `cargo test --workspace --locked` passed 131 tests; `cargo clippy --workspace --all-targets --locked -- -D warnings` passed. `cargo xtask worker --os macos` rebuilt the macOS worker, which answers protocol `688f4a2f99e55910`.
+
 ## Worker protocol — 2026-10-04
 
 Platform: macOS 26.6.2 arm64 (no VM).

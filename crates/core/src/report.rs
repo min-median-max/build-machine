@@ -160,6 +160,28 @@ impl PlatformResult {
     pub fn failed(finished_at: String, log: String, error: String) -> Self {
         Self { success: false, status: Outcome::Failed, error: Some(error), ..Self::passed(finished_at, log) }
     }
+
+    /// The workflow steps that reached execution. A step its `if` skipped,
+    /// one a secret condition skipped and a skip marker did not.
+    pub fn executed_steps(&self) -> usize {
+        self.stages
+            .values()
+            .flat_map(|stage| &stage.steps)
+            .filter(|step| step.adapter != "skip" && step.status != Outcome::Skipped && !step.skipped)
+            .count()
+    }
+
+    /// A replay that executed no workflow step did not replay the workflow,
+    /// so a success it reports is turned into a failure that says so.
+    pub fn require_executed_steps(&mut self) {
+        if self.success && self.executed_steps() == 0 {
+            self.success = false;
+            self.status = Outcome::Failed;
+            self.error = Some(
+                "이 플랫폼에서 실행된 workflow 단계가 없어요. 이 플랫폼의 job이 없거나 모든 단계가 건너뛰어졌어요.".to_owned(),
+            );
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

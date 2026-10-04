@@ -107,3 +107,16 @@ fn a_worker_of_another_protocol_fails_the_platform() {
     assert!(!result.success && !report.succeeded(), "{report:#?}");
     assert!(error.contains("protocol") && error.contains("cargo xtask worker"), "{error}");
 }
+
+/// A worker of this protocol whose replay reached no workflow step has not
+/// replayed the workflow, so its success is not one.
+#[test]
+fn a_replay_that_ran_no_step_fails_the_platform() {
+    let protocol = build_machine_core::request::PROTOCOL;
+    let fixture = fixture(&format!("if [ \"$1\" = protocol ]; then echo {protocol}; exit 0; fi\n{EMPTY_SUCCESS}"));
+    let report = replay(&fixture);
+    let result = &report.results[&Platform::Macos];
+    let error = result.error.clone().unwrap_or_default();
+    assert!(!result.success && !report.succeeded(), "{report:#?}");
+    assert!(error.contains("실행된 workflow 단계가 없어요"), "{error}");
+}

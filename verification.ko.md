@@ -8,6 +8,13 @@
 > 그 실행들의 기록으로 남겨 두며, Rust 구현을 설명하도록 고쳐 쓰지 않습니다. 그렇게 하면
 > 기록이 거짓이 됩니다. Rust 재작성이 무엇을 보였고 무엇을 보이지 않았는지는 바로 아래에 있습니다.
 
+## 단계를 실행하지 않은 재현 — 2026-10-04
+
+플랫폼: macOS 26.6.2 arm64 (VM 없음).
+
+- Red, B5(`b13a25c`)에서: `cargo test -p build-machine-controller --locked --test worker`의 `a_replay_that_ran_no_step_fails_the_platform`이 실패했습니다: controller의 protocol에 답하고 단계 없는 성공을 보고하는 가짜 워커의 결과가 `success: true`, `status: PassedWithLimits`, `error: None`이었습니다. `crates/core/tests/report.rs`는 `error[E0599]: no method named executed_steps found for struct PlatformResult`로 컴파일되지 않았습니다.
+- Green: core report 1/1, controller worker 2/2. `cargo test --workspace --locked`가 131건을 통과했고 `cargo clippy --workspace --all-targets --locked -- -D warnings`가 통과했습니다. `cargo xtask worker --os macos`로 macOS 워커를 다시 빌드했고, 워커는 protocol `688f4a2f99e55910`을 답합니다.
+
 ## 워커 protocol — 2026-10-04
 
 플랫폼: macOS 26.6.2 arm64 (VM 없음).

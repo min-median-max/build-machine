@@ -205,7 +205,9 @@ fn execute_platform(
     let arguments = worker_arguments(operation, request.as_deref());
     let output = transport.invoke(&arguments, log)?;
     if operation.action == Action::Ci {
-        return parse_report(&output);
+        let mut result = parse_report(&output)?;
+        result.require_executed_steps();
+        return Ok(result);
     }
     Ok(PlatformResult::passed(now(), String::new()))
 }
