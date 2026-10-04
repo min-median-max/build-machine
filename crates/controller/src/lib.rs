@@ -4,6 +4,7 @@
 //! a single run report and bounds what it keeps. It runs only on macOS, which
 //! is where the virtual machines and the desktop application live.
 
+pub mod disk;
 pub mod matrix;
 pub mod oplog;
 pub mod snapshot;

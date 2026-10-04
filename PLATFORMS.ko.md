@@ -16,6 +16,12 @@
 
 빌드 대상을 맞춰도 로컬 OS 이미지와 GitHub 호스팅 이미지 전체가 같아지는 것은 아닙니다. Windows x64와 Intel macOS에서의 네이티브 실행은 별도의 검증 대상이며 ARM64 실행으로 확인되지 않습니다. macOS 유니버설 산출물은 두 아키텍처를 포함할 수 있지만 로컬 실행 검증은 실제 실행한 아키텍처만 확인합니다.
 
+## 가상 머신의 디스크 공간
+
+Parallels 디스크(`type='expanded'`)는 게스트가 쓰는 만큼 커지고, 게스트가 파일을 지워도 가진 블록을 유지합니다. 두 가지가 함께 일어날 때만 돌려줍니다. 게스트가 파일 시스템이 더 쓰지 않는 블록을 discard하고, Parallels가 이미지를 온라인으로 압축해 Mac의 `.hds` 파일에서 그 블록을 빼는 것입니다. Linux 게스트의 SATA 디스크는 discard를 받습니다(`lsblk --discard`의 granularity 4K).
+
+컨트롤러는 setup, build, release, 재현 전에 Linux VM의 디스크 중 `online-compact`가 꺼진 것을 켜고, 작업이 끝나면 성공 여부와 상관없이 워커의 권한 명령 `reclaim`(게스트의 `fstrim --all`)을 실행합니다. 결과는 `.hds` 파일의 겉보기 크기(`ls`, Finder)가 아니라 할당된 블록(`du -k`)으로 측정합니다. 겉보기 크기는 가장 컸던 크기에 머뭅니다. 2026-10-04에 실행 중인 게스트에서 `fstrim`이 37.6 GiB를 trim한 뒤 이미지의 겉보기 크기는 42,838,523,904 bytes 그대로였고 할당은 40 GB에서 26,993,664 KiB로 줄었습니다.
+
 ## 현재 구현 상태
 
 macOS [데스크톱 제어 앱](GUI.ko.md)은 유지보수하는 같은 명령을 호출합니다. 도구 검사 결과는 VM 연결 상태와 구분해서 유지합니다. 현재 지원하는 프로젝트 구조와 프레임워크별 미지원 범위는 [PROJECTS.ko.md](PROJECTS.ko.md)에 정의합니다. Parallels 명령의 간헐적 실패는 [verification.md](verification.md)에 기록한 알려진 문제입니다.

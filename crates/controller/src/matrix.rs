@@ -202,8 +202,26 @@ fn execute_platform(
             transport.invoke_elevated(&["setup-system".to_owned()], log)?;
         }
     }
+    // The guest gives the space the work freed back to the Mac afterwards,
+    // whether or not the work succeeded.
+    let reclaims = platform == Platform::Linux
+        && matches!(operation.action, Action::Setup | Action::Build | Action::Release | Action::Ci);
+    if reclaims {
+        let vm = operation.machine.profile(platform)?.vm.clone().context("machine.json에 Linux vm이 없어요.")?;
+        for disk in crate::disk::ensure_online_compact(&crate::transport::prlctl_path()?, &vm)? {
+            log.note(&format!("DISK {vm} {disk}: online compaction turned on"));
+        }
+    }
     let arguments = worker_arguments(operation, request.as_deref());
-    let output = transport.invoke(&arguments, log)?;
+    let output = transport.invoke(&arguments, log);
+    if reclaims {
+        if let Err(error) = transport.invoke_elevated(&["reclaim".to_owned()], log) {
+            // Like retention, a reclaim that fails stays visible in the log
+            // and does not change the result of the work it followed.
+            log.note(&format!("WARNING: could not reclaim the guest's free space: {error:#}"));
+        }
+    }
+    let output = output?;
     if operation.action == Action::Ci {
         let mut result = parse_report(&output)?;
         result.require_executed_steps();

@@ -31,6 +31,9 @@ enum Command {
     Doctor,
     /// Install system-wide prerequisites. Requires elevation.
     SetupSystem,
+    /// Give the space the file systems no longer use back to the host.
+    /// Requires elevation.
+    Reclaim,
     /// Install every declared prerequisite for this user.
     Setup,
     /// Build a project from a request document.
@@ -94,6 +97,7 @@ fn execute() -> Result<()> {
             }
         }
         Command::SetupSystem => tools.setup_system()?,
+        Command::Reclaim => provision::reclaim(&tools)?,
         Command::Setup => {
             tools.setup_system()?;
             tools.setup_user()?;

@@ -193,6 +193,16 @@ impl Tools {
     }
 }
 
+/// Discard the blocks the file systems no longer use, so the virtual disk can
+/// give them back to the host. Linux only; requires root.
+pub fn reclaim(tools: &Tools) -> Result<()> {
+    if tools.platform != Platform::Linux {
+        bail!("reclaim는 Linux 작업자에서만 실행해요.");
+    }
+    crate::stream::checked("fstrim", &["--all".to_owned(), "--verbose".to_owned()], None, &tools.environment)?;
+    Ok(())
+}
+
 /// The `apt-get` commands that install missing Linux packages.
 ///
 /// The machine's own packages keep apt's defaults, as their installation

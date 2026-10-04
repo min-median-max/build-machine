@@ -16,6 +16,12 @@ Projects use one recorded source snapshot for the selected platforms. Source rev
 
 Matching a build target does not make local OS images identical to GitHub-hosted images. Windows x64 and native Intel macOS execution are additional targets, not covered by ARM64 execution. A universal macOS artifact can contain both architectures while local launch verifies only the architecture actually executed.
 
+## Disk space of the virtual machines
+
+A Parallels disk (`type='expanded'`) grows as the guest writes and keeps the blocks it holds after the guest deletes files. It gives them back only when two things happen together: the guest discards the blocks its file system no longer uses, and Parallels compacts the image online, punching those blocks out of the `.hds` file on the Mac. The Linux guest's SATA disk accepts discards (`lsblk --discard` shows a 4K granularity).
+
+The controller turns on `online-compact` for every disk of the Linux VM that lacks it before setup, build, release and replay, and afterwards — whether the work succeeded or not — runs the worker's elevated `reclaim`, which is `fstrim --all` in the guest. Measure the result by the blocks the `.hds` file allocates (`du -k`), not by its apparent size (`ls`, Finder), which stays at its largest: on 2026-10-04 the image stayed at 42,838,523,904 bytes apparent while its allocation fell from 40 GB to 26,993,664 KiB after `fstrim` trimmed 37.6 GiB in the running guest.
+
 ## Current implementation status
 
 The macOS [desktop controller](GUI.md) and the `build-machine` command are two front ends over one controller library. Its tool results persist separately from VM connection state. Current supported project layouts and framework gaps are defined in [PROJECTS.md](PROJECTS.md). Parallels command stability remains a known issue recorded in [verification.md](verification.md).
