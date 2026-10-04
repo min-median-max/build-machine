@@ -34,6 +34,9 @@ pub struct StepFiles {
     pub env: PathBuf,
     pub path: PathBuf,
     pub output: PathBuf,
+    /// `GITHUB_STEP_SUMMARY`. GitHub renders it on the run page; a replay
+    /// only provides it.
+    pub summary: PathBuf,
 }
 
 impl Runner {
@@ -74,7 +77,9 @@ impl Runner {
             env: self.directory.join(format!("env-{position}")),
             path: self.directory.join(format!("path-{position}")),
             output: self.directory.join(format!("output-{position}")),
+            summary: self.directory.join(format!("summary-{position}")),
         };
+        std::fs::write(&files.summary, "")?;
         std::fs::write(&files.env, "")?;
         std::fs::write(&files.path, "")?;
         std::fs::write(&files.output, "")?;
@@ -95,6 +100,7 @@ impl Runner {
         std::fs::remove_file(&files.env).ok();
         std::fs::remove_file(&files.path).ok();
         std::fs::remove_file(&files.output).ok();
+        std::fs::remove_file(&files.summary).ok();
         let outputs = parse_env_file(&output).context("GITHUB_OUTPUT를 읽지 못했어요")?;
         if let Some(id) = id {
             self.outputs.entry(id.to_owned()).or_default().extend(outputs);
@@ -120,7 +126,7 @@ impl Runner {
         for (key, value) in &self.variables {
             set(&mut environment, key, value.clone());
         }
-        let runner: [(&str, String); 9] = [
+        let runner: [(&str, String); 10] = [
             ("GITHUB_ACTIONS", "true".to_owned()),
             ("CI", "true".to_owned()),
             ("GITHUB_WORKSPACE", self.workspace.to_string_lossy().into_owned()),
@@ -130,6 +136,7 @@ impl Runner {
             ("GITHUB_ENV", files.env.to_string_lossy().into_owned()),
             ("GITHUB_PATH", files.path.to_string_lossy().into_owned()),
             ("GITHUB_OUTPUT", files.output.to_string_lossy().into_owned()),
+            ("GITHUB_STEP_SUMMARY", files.summary.to_string_lossy().into_owned()),
         ];
         for (key, value) in runner {
             set(&mut environment, key, value);

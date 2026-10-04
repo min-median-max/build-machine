@@ -79,3 +79,32 @@ jobs:
         ]
     );
 }
+
+/// A job asks GitHub for a runner image; the replay runs on this machine. A
+/// difference the label states — another Ubuntu release or another
+/// architecture — is recorded, not passed over.
+#[test]
+fn a_runner_image_the_machine_does_not_match_is_a_recorded_limit() {
+    use build_machine_worker::ci::runner_image_limit;
+    assert_eq!(runner_image_limit("ubuntu-26.04-arm", "26.04", "aarch64"), None);
+    assert_eq!(runner_image_limit("ubuntu-26.04", "26.04", "x86_64"), None);
+    let release = runner_image_limit("ubuntu-24.04-arm", "26.04", "aarch64").unwrap();
+    assert!(release.contains("24.04") && release.contains("26.04"), "{release}");
+    let arch = runner_image_limit("ubuntu-26.04", "26.04", "aarch64").unwrap();
+    assert!(arch.contains("x86_64") || arch.contains("X64"), "{arch}");
+    // ubuntu-latest names no release, which is itself a difference to record.
+    assert!(runner_image_limit("ubuntu-latest", "26.04", "aarch64").is_some());
+}
+
+/// `$GITHUB_STEP_SUMMARY` exists for every step, as on a runner, so a step
+/// that appends to it does not fail on an unset variable.
+#[test]
+fn every_step_has_a_step_summary_file() {
+    use build_machine_worker::runner::Runner;
+    let directory = tempfile::tempdir().unwrap();
+    let runner = Runner::new(&directory.path().join("runner"), directory.path(), build_machine_core::Platform::Linux).unwrap();
+    let files = runner.begin_step(1).unwrap();
+    let environment = runner.environment(&[], &files);
+    let summary = environment.iter().find(|(key, _)| key == "GITHUB_STEP_SUMMARY").map(|(_, value)| value.clone()).unwrap();
+    assert!(std::path::Path::new(&summary).is_file());
+}

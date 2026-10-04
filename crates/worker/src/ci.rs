@@ -286,6 +286,31 @@ fn execute(
     Ok(ran)
 }
 
+/// What a job's Ubuntu runner label asks for that this machine is not: another
+/// Ubuntu release, or another architecture (`-arm` is ARM64, no suffix x64).
+pub fn runner_image_limit(runs_on: &str, version_id: &str, arch: &str) -> Option<String> {
+    let label = runs_on.to_ascii_lowercase();
+    let rest = label.strip_prefix("ubuntu-")?;
+    let (release, wants_arm) = match rest.strip_suffix("-arm") {
+        Some(release) => (release, true),
+        None => (rest, false),
+    };
+    let is_arm = matches!(arch, "aarch64" | "arm64");
+    let mut differences = Vec::new();
+    if release != version_id {
+        differences.push(format!("Ubuntu {release}"));
+    }
+    if wants_arm != is_arm {
+        differences.push(if wants_arm { "ARM64".to_owned() } else { "x86_64 (X64)".to_owned() });
+    }
+    (!differences.is_empty()).then(|| {
+        format!(
+            "The job runs on {runs_on}, which is {}; this machine is Ubuntu {version_id} {arch}.",
+            differences.join(" and ")
+        )
+    })
+}
+
 /// The variables a runner gives every step of a job.
 fn runner_context(request: &WorkRequest, job: &Job, tracking: &str) -> Vec<(&'static str, String)> {
     let mut context = vec![
@@ -491,6 +516,12 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
                 record(&mut stages, step, ran, build_machine_core::now());
             }
             continue;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(version_id) = std::fs::read_to_string("/etc/os-release").ok().and_then(|text| {
+            text.lines().find_map(|line| line.strip_prefix("VERSION_ID=").map(|value| value.trim_matches('"').to_owned()))
+        }) {
+            result.limits.extend(runner_image_limit(&job.runs_on, &version_id, std::env::consts::ARCH));
         }
         // Every job starts in an empty workspace; actions/checkout fills it.
         if workspace.exists() {
