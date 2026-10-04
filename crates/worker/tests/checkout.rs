@@ -5,7 +5,7 @@
 //! `.git` fails checks that pass on a runner.
 
 use build_machine_core::source;
-use build_machine_worker::checkout::{checkout, Checkout};
+use build_machine_worker::checkout::{checkout, checkout_repository, Checkout, RepositoryCheckout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -123,4 +123,96 @@ fn uncommitted_changes_are_staged_on_the_replayed_commit() {
     assert!(git(&workspace, &["ls-files"]).lines().any(|name| name == "new.txt"));
     assert!(!workspace.join("not-this.txt").exists());
     assert_eq!(std::fs::read_to_string(workspace.join("value.txt")).unwrap(), "edited");
+}
+
+/// Another repository a step names, checked out from its bundle into
+/// `directory`: `fixture.project` stands for that repository's local clone.
+fn other(fixture: &Fixture, reference: Option<&str>, depth: u32, name: &str) -> anyhow::Result<(PathBuf, String)> {
+    let history = fixture.base.join(format!("{name}-other.bundle"));
+    source::make_history(&fixture.project, None, &history).unwrap();
+    let workspace = fixture.base.join(name).join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    // The job's own checkout is already in the workspace.
+    std::fs::write(workspace.join("go.mod"), "module files").unwrap();
+    let directory = workspace.join("core");
+    let summary = checkout_repository(
+        &RepositoryCheckout {
+            repository: "example/orm",
+            history: &history,
+            mirror: &fixture.base.join(format!("{name}-other-mirror.git")),
+            directory: &directory,
+            reference,
+            fetch_depth: depth,
+            fetch_tags: false,
+        },
+        &[("PATH".to_owned(), std::env::var("PATH").unwrap())],
+    )?;
+    Ok((directory, summary))
+}
+
+/// The soksak releases check out `soksak-app/core` at the release tag into
+/// `core`: the tag's commit, without the clone's uncommitted edits.
+#[test]
+fn another_repository_is_checked_out_at_a_tag_into_its_path() {
+    let fixture = fixture();
+    std::fs::write(fixture.project.join("value.txt"), "uncommitted").unwrap();
+    let (directory, summary) = other(&fixture, Some("v0.1.0"), 1, "tag-path").unwrap();
+    assert_eq!(git(&directory, &["rev-parse", "HEAD"]), git(&fixture.project, &["rev-parse", "v0.1.0^{commit}"]));
+    assert_eq!(std::fs::read_to_string(directory.join("value.txt")).unwrap(), "commit 0");
+    assert_eq!(git(&directory, &["status", "--porcelain"]), "");
+    assert_eq!(git(&directory, &["log", "--format=%s"]).lines().count(), 1);
+    assert!(directory.parent().unwrap().join("go.mod").is_file());
+    assert!(summary.contains("example/orm") && summary.contains("v0.1.0"), "{summary}");
+}
+
+/// A branch is checked out as that branch; `fetch-depth: 0` carries every
+/// branch and tag.
+#[test]
+fn another_repository_is_checked_out_at_a_branch() {
+    let fixture = fixture();
+    let (directory, _) = other(&fixture, Some("side"), 0, "branch").unwrap();
+    assert_eq!(git(&directory, &["symbolic-ref", "HEAD"]), "refs/heads/side");
+    assert_eq!(git(&directory, &["rev-parse", "HEAD"]), git(&fixture.project, &["rev-parse", "side"]));
+    assert!(git(&directory, &["tag"]).contains("v0.1.0"));
+}
+
+/// A commit SHA is checked out detached; no `ref` is the bundle's `HEAD`.
+#[test]
+fn another_repository_is_checked_out_at_a_commit_or_its_head() {
+    let fixture = fixture();
+    let first = git(&fixture.project, &["rev-list", "--max-parents=0", "HEAD"]);
+    let (directory, _) = other(&fixture, Some(&first), 1, "commit").unwrap();
+    assert_eq!(git(&directory, &["rev-parse", "HEAD"]), first);
+    let (directory, _) = other(&fixture, None, 1, "head").unwrap();
+    assert_eq!(git(&directory, &["rev-parse", "HEAD"]), git(&fixture.project, &["rev-parse", "HEAD"]));
+}
+
+/// An annotated tag is checked out at the commit it tags.
+#[test]
+fn another_repository_is_checked_out_at_an_annotated_tag() {
+    let fixture = fixture();
+    git(&fixture.project, &["tag", "-a", "v0.1.1", "-m", "note", "side"]);
+    let (directory, _) = other(&fixture, Some("v0.1.1"), 1, "annotated").unwrap();
+    assert_eq!(git(&directory, &["rev-parse", "HEAD"]), git(&fixture.project, &["rev-parse", "side"]));
+}
+
+/// A ref the repository does not have fails the step and names both.
+#[test]
+fn an_unknown_ref_of_another_repository_fails_the_step() {
+    let fixture = fixture();
+    let error = other(&fixture, Some("v9.9.9"), 1, "unknown").unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("example/orm") && message.contains("v9.9.9"), "{message}");
+}
+
+/// Another repository goes into an empty or absent directory, as the
+/// project's own checkout does.
+#[test]
+fn another_repository_is_not_checked_out_over_files() {
+    let fixture = fixture();
+    let directory = fixture.base.join("occupied").join("workspace").join("core");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("left.txt"), "left").unwrap();
+    let error = other(&fixture, Some("v0.1.0"), 1, "occupied").unwrap_err();
+    assert!(format!("{error:#}").contains("비어 있지 않아요"), "{error:#}");
 }

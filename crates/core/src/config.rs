@@ -22,6 +22,10 @@ pub struct Machine {
     #[serde(default)]
     pub retention: Retention,
     pub platforms: BTreeMap<String, Profile>,
+    /// The local clone of each other GitHub repository (`owner/name`) a
+    /// workflow's `actions/checkout` step may name, by absolute path.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repositories: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

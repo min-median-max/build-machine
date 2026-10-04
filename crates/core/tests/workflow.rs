@@ -509,3 +509,82 @@ jobs:
     .unwrap_err();
     assert!(format!("{error:#}").contains("github"), "{error:#}");
 }
+
+/// A checkout step with `repository` names a workflow of `steps` around it:
+/// the soksak component releases check out `soksak-app/core` beside their own
+/// repository to build its `sok`.
+fn checkout_of(with: &str) -> String {
+    format!(
+        r#"# build-machine: skip build reason=fixture
+# build-machine: skip smoke reason=fixture
+name: ci
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: echo "tag=v0.0.2" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+{with}
+      - run: make check
+"#
+    )
+}
+
+/// `repository`, `ref` and `path` are read, and `ref` is a template whose
+/// step outputs take their values when the step runs.
+#[test]
+fn a_checkout_of_another_repository_is_read_with_its_ref_and_path() {
+    let parsed = load(&checkout_of(
+        "          repository: soksak-app/core\n          ref: ${{ steps.version.outputs.tag }}\n          path: core",
+    ))
+    .unwrap();
+    let step = &parsed.jobs[0].steps[2];
+    assert_eq!(step.with["repository"], "soksak-app/core");
+    assert_eq!(step.with["path"], "core");
+    let mut outputs = workflow::Outputs::new();
+    outputs.insert("version".to_owned(), [("tag".to_owned(), "v0.0.2".to_owned())].into_iter().collect());
+    assert_eq!(step.resolve(&outputs).unwrap().with["ref"], "v0.0.2");
+}
+
+/// `path` places the other repository inside the workspace; a path that
+/// leaves it is refused before anything runs.
+#[test]
+fn a_checkout_path_outside_the_workspace_fails_validation() {
+    for path in ["../core", "/tmp/core", "core/../../core"] {
+        let error = load(&checkout_of(&format!("          repository: soksak-app/core\n          path: {path}"))).unwrap_err();
+        assert!(format!("{error:#}").contains("GITHUB_WORKSPACE 안의 상대 경로"), "{path}: {error:#}");
+    }
+}
+
+/// Without `repository` the step checks out the replayed revision, so a
+/// `ref` or `path` would be dropped; it is refused instead.
+#[test]
+fn ref_and_path_without_a_repository_fail_validation() {
+    for with in ["          ref: v0.0.2", "          path: core"] {
+        let error = load(&checkout_of(with)).unwrap_err();
+        assert!(format!("{error:#}").contains("repository와 함께"), "{with}: {error:#}");
+    }
+}
+
+/// A `ref` expression is read like every other template: a context with no
+/// local value fails validation.
+#[test]
+fn a_checkout_ref_without_a_local_value_fails_validation() {
+    let error =
+        load(&checkout_of("          repository: soksak-app/core\n          ref: ${{ github.sha }}")).unwrap_err();
+    assert!(format!("{error:#}").contains("Unsupported workflow context: github.sha"), "{error:#}");
+}
+
+/// A repository is `owner/name`; an expression has no value to look up in
+/// `machine.json` before the run.
+#[test]
+fn a_checkout_repository_must_be_owner_and_name() {
+    for repository in ["core", "soksak-app/core/extra", "${{ steps.version.outputs.tag }}/core"] {
+        let error = load(&checkout_of(&format!("          repository: {repository}"))).unwrap_err();
+        assert!(format!("{error:#}").contains("owner/name"), "{repository}: {error:#}");
+    }
+}

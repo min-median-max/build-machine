@@ -57,10 +57,16 @@ fn write_request(
         transport.locate(Path::new(&snapshot.archive))?
     };
     let history = snapshot.history.as_deref().map(|path| transport.locate(Path::new(path))).transpose()?;
+    let repositories = snapshot
+        .repositories
+        .iter()
+        .map(|(name, recorded)| Ok((name.clone(), transport.locate(Path::new(&recorded.bundle))?)))
+        .collect::<Result<_>>()?;
     let request = WorkRequest {
         snapshot: snapshot.clone(),
         archive,
         history,
+        repositories,
         target: profile.target.clone(),
         bundle: profile.bundle.clone(),
         framework: snapshot.framework.as_deref().and_then(|value| value.parse().ok()),

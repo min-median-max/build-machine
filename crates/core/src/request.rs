@@ -40,6 +40,10 @@ pub struct WorkRequest {
     /// Where the worker can read the replay's Git history from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<String>,
+    /// Where the worker can read each other repository's history from, by
+    /// the key of `snapshot.repositories`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repositories: BTreeMap<String, String>,
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<String>,

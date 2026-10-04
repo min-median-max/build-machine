@@ -12,6 +12,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - `run:` 블록은 Linux와 macOS에서 `/bin/sh -eu`가 아니라 runner처럼 `bash -e`로 실행합니다. 재현은 workflow의 `rust-toolchain.toml`을 덮어쓰던 `RUSTUP_TOOLCHAIN`을 더 이상 설정하지 않습니다.
 - build 단계가 없는 workflow는 test·smoke처럼 `# build-machine: skip build reason=...`로 이유를 밝힐 수 있습니다.
 - 단계 키 `shell`, `continue-on-error`와 어댑터가 반영하지 않는 setup action 입력은 버려지지 않고 검증에서 실패합니다.
+- `actions/checkout`이 `machine.json`의 `repositories`가 로컬 clone에 대응시킨 다른 저장소에 대해 `repository`, `ref`, `path`를 받습니다. 재현은 그 clone의 commit된 branch, tag 또는 commit을 `path`에 checkout합니다. 이 입력들은 검증에서 실패했으며, soksak 구성 요소 릴리스는 이 방식으로 `soksak-app/core`를 checkout합니다.
 - README에 적힌 대로 `cargo xtask`가 동작합니다. 워크스페이스에 `xtask` alias가 없어서 `cargo xtask worker --os linux`, `cargo xtask test`, `cargo xtask build --run`이 "no such command"로 실패했습니다.
 - 개발 빌드는 자신을 컴파일한 워크스페이스를 사용합니다. `--root` 없이 실행한 `target/debug/build-machine`은 자기 위치에서 위로 찾다가 Tauri가 `target/debug`에 복사한 `machine.json`에서 멈췄고, `ci run`이 "The named build-machine share already belongs to another directory"로 실패했습니다. 워크스페이스 밖의 실행 파일은 이제 기본 root가 없고 `--root`를 요구합니다. 이전에는 명령줄이 현재 디렉터리로 대신했습니다.
 - 시간 제한은 workflow의 것입니다. job은 자신의 `timeout-minutes` 또는 GitHub의 360분 동안, 단계는 job에 남은 시간 안에서 자신의 `timeout-minutes`만큼 실행합니다. 이전에는 어떤 workflow도 선언하지 않은 스테이지별 고정 제한(test 단계 30분)으로 단계를 끊었습니다. 자신의 제한을 넘은 단계는 실패하고, 제한을 넘은 job은 취소되어 `cancelled()`가 참이 되며 그 뒤로는 취소 뒤에도 실행하는 단계만 실행합니다.

@@ -54,6 +54,7 @@ jobs:
         .unwrap(),
         archive: String::new(),
         history: None,
+        repositories: Default::default(),
         target: String::new(),
         bundle: None,
         framework: None,

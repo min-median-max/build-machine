@@ -13,7 +13,9 @@ use crate::stream;
 use anyhow::{bail, Result};
 use build_machine_core::report::{Artifact, Outcome, PlatformResult, Stage, Step as ReportStep};
 use build_machine_core::request::WorkRequest;
-use build_machine_core::workflow::{names_secret, stage_of, Adapter, Condition, Job, JobStatus, Step};
+use build_machine_core::workflow::{
+    checkout_target, find_repository, names_secret, stage_of, Adapter, CheckoutTarget, Condition, Job, JobStatus, Step,
+};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -112,9 +114,45 @@ fn tauri_action(
     Ok(artifacts)
 }
 
-/// `actions/checkout` into the job's empty workspace.
+/// `actions/checkout` of another repository into `path` under the workspace,
+/// from the history the controller bundled from its local clone.
+fn checkout_other(
+    target: &CheckoutTarget,
+    workspace: &Path,
+    request: &WorkRequest,
+    depth: (u32, bool),
+    environment: &[(String, String)],
+) -> Result<String> {
+    let (name, recorded) = find_repository(&request.snapshot.repositories, &target.repository)
+        .with_context(|| format!("요청에 {}의 Git 기록이 없어요.", target.repository))?;
+    let history = request.repositories.get(name).with_context(|| format!("요청에 {name}의 Git 기록 경로가 없어요."))?;
+    let history = Path::new(history);
+    if build_machine_core::source::sha256_file(history)? != recorded.sha256 {
+        bail!("{name} Git history checksum mismatch.");
+    }
+    let directory = workspace.join(target.path.as_deref().unwrap_or("."));
+    let mirror = project_root(request)?.join("repositories").join(format!("{name}.git"));
+    crate::checkout::checkout_repository(
+        &crate::checkout::RepositoryCheckout {
+            repository: name,
+            history,
+            mirror: &mirror,
+            directory: &directory,
+            reference: target.reference.as_deref(),
+            fetch_depth: depth.0,
+            fetch_tags: depth.1,
+        },
+        environment,
+    )
+}
+
+/// `actions/checkout` into the job's empty workspace, or of another
+/// repository into its `path`.
 fn checkout_step(step: &Step, workspace: &Path, request: &WorkRequest, environment: &[(String, String)]) -> Result<String> {
     let (fetch_depth, fetch_tags) = build_machine_core::workflow::checkout_inputs(&step.with)?;
+    if let Some(target) = checkout_target(&step.with)? {
+        return checkout_other(&target, workspace, request, (fetch_depth, fetch_tags), environment);
+    }
     let history = request.history.as_deref().context("요청에 checkout할 Git 기록이 없어요.")?;
     let history = Path::new(history);
     if Some(build_machine_core::source::sha256_file(history)?) != request.snapshot.history_sha256 {
@@ -234,14 +272,22 @@ fn execute(
         Adapter::Checkout => {
             let summary = checkout_step(step, source, request, &environment)?;
             println!("{summary}");
-            result.limits.push(
-                "actions/checkout fetches from this repository's own branches and tags through a local mirror, not from the GitHub remote.".to_owned(),
-            );
-            if request.snapshot.dirty {
-                result.limits.push(format!(
-                    "Uncommitted changes of the working tree are staged on {} in the checkout; GitHub checks out committed files only.",
-                    request.snapshot.revision
-                ));
+            match checkout_target(&step.with)? {
+                Some(target) => result.limits.push(format!(
+                    "actions/checkout of {} fetches the committed branches and tags of its local clone named in machine.json repositories, not from the GitHub remote; uncommitted changes of that clone are not checked out.",
+                    target.repository
+                )),
+                None => {
+                    result.limits.push(
+                        "actions/checkout fetches from this repository's own branches and tags through a local mirror, not from the GitHub remote.".to_owned(),
+                    );
+                    if request.snapshot.dirty {
+                        result.limits.push(format!(
+                            "Uncommitted changes of the working tree are staged on {} in the checkout; GitHub checks out committed files only.",
+                            request.snapshot.revision
+                        ));
+                    }
+                }
             }
             let mut ran = Ran::new(Outcome::PassedWithLimits);
             ran.output = Some(summary);

@@ -47,6 +47,7 @@ fn archive_project(state: &Path, project: &Path, reference: Option<&str>) -> Res
         history: None,
         history_sha256: None,
         checkout_ref: None,
+        repositories: Default::default(),
     };
     Ok((snapshot, archive))
 }
@@ -101,6 +102,7 @@ pub fn for_run(operation: &Operation) -> Result<Snapshot> {
         history: None,
         history_sha256: None,
         checkout_ref: None,
+        repositories: Default::default(),
     })
 }
 
@@ -151,6 +153,17 @@ pub fn for_replay(operation: &Operation, state: &Path) -> Result<Replay> {
     snapshot.history = Some(bundle.to_string_lossy().into_owned());
     snapshot.history_sha256 = Some(history.sha256);
     snapshot.checkout_ref = history.reference;
+    // Each other repository a checkout step names is fetched from its local
+    // clone's committed history, bundled the same way beside the project's.
+    for (name, clone) in workflow::checkout_repositories(&selected, &operation.machine.repositories)? {
+        let bundle = archive.with_file_name("repositories").join(format!("{name}.bundle"));
+        let history = source::make_history(&clone, None, &bundle)
+            .with_context(|| format!("{name}의 Git 기록을 묶지 못했어요: {}", clone.display()))?;
+        snapshot.repositories.insert(
+            name,
+            source::RepositoryHistory { bundle: bundle.to_string_lossy().into_owned(), sha256: history.sha256 },
+        );
+    }
     snapshot.workflow_path = Some(selected.path.clone());
     snapshot.event = Some(event);
     snapshot.requested_ref = operation.reference.clone();

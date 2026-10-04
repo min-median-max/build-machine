@@ -42,6 +42,9 @@
     "maxBytes": 8589934592,
     "days": 30
   },
+  "repositories": {
+    "soksak-app/core": "/Users/maxkwon/Projects/soksak/core"
+  },
   "platforms": {
     "windows": {
       "vm": "Windows 11",

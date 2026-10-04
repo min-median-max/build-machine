@@ -188,6 +188,7 @@ fn execute() -> Result<()> {
                 "dirty": prepared.snapshot.dirty,
                 "stages": prepared.snapshot.stage_counts,
                 "platforms": build_machine_core::workflow::declared_platforms(&prepared.workflow),
+                "repositories": prepared.snapshot.repositories.keys().collect::<Vec<_>>(),
             }))?
         );
         return Ok(());

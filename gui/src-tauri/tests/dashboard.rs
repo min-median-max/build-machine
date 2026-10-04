@@ -29,6 +29,7 @@ fn snapshot(project: &str) -> Snapshot {
         history: None,
         history_sha256: None,
         checkout_ref: None,
+        repositories: BTreeMap::new(),
     }
 }
 

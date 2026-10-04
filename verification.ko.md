@@ -8,6 +8,15 @@
 > 그 실행들의 기록으로 남겨 두며, Rust 구현을 설명하도록 고쳐 쓰지 않습니다. 그렇게 하면
 > 기록이 거짓이 됩니다. Rust 재작성이 무엇을 보였고 무엇을 보이지 않았는지는 바로 아래에 있습니다.
 
+## 다른 저장소 checkout — 2026-10-04
+
+플랫폼: macOS 26.6.2 arm64 (호스트의 controller와 macOS worker 코드, VM과 `ci run`은 실행하지 않음).
+
+- Red, 변경 전 구현에서: `cargo test -p build-machine-core --locked --test workflow`가 24건 중 5건 실패했습니다. `a_checkout_of_another_repository_is_read_with_its_ref_and_path`는 `called Result::unwrap() on an Err value: actions/checkout@v4의 with 입력 'path'은 아직 지원하지 않아요`로 실패했고, `a_checkout_path_outside_the_workspace_fails_validation`, `ref_and_path_without_a_repository_fail_validation`, `a_checkout_ref_without_a_local_value_fails_validation`, `a_checkout_repository_must_be_owner_and_name`은 같은 미지원 입력 오류로 메시지 assertion에서 실패했습니다. `cargo test -p build-machine-controller --locked --test replay`는 같은 오류로 두 test `a_replay_bundles_every_repository_its_checkout_steps_name`, `a_repository_the_machine_does_not_map_fails_validation`이 모두 실패했습니다. worker test `crates/worker/tests/checkout.rs`는 `error[E0432]: unresolved imports build_machine_worker::checkout::checkout_repository, build_machine_worker::checkout::RepositoryCheckout`로 컴파일되지 않았습니다.
+- Green: core workflow test 24건 중 24건, controller replay test 2건 중 2건, worker checkout test 10건 중 10건이 통과했습니다. worker test는 기존 workspace 파일 옆 `core`에 tag를 clone의 commit되지 않은 수정 없이 checkout하고, `fetch-depth: 0`의 branch, commit SHA, bundle의 `HEAD`를 checkout하며, 없는 ref와 비어 있지 않은 폴더가 명시적 실패인지 확인합니다. `another_repository_is_checked_out_at_an_annotated_tag`는 구현 뒤에 추가했으므로 Red 근거가 아닙니다.
+- `cargo test --workspace --locked`가 113건을 통과했고 `cargo clippy --workspace --all-targets --locked -- -D warnings`가 통과했습니다.
+- `build-machine ci validate /Users/maxkwon/Projects/soksak/sidecars/files --workflow .github/workflows/release.yml --event push --os macos`(sidecar-files `3c5863aefb8a161832542faa9b0d29af65a40fb8`, dirty)는 실패했습니다: `job release의 step 2 (actions/checkout@v4)의 with ref: Unsupported workflow context: github.ref_name. Only steps.<id>.outputs.<name> has a value in a local replay.` `github` context에는 아직 로컬 값이 없습니다(B2). 이 workflow에는 smoke 단계와 smoke skip 주석도 없어서, 식이 받아들여진 뒤에는 gate가 거부합니다.
+
 ## Rust 재작성
 
 재작성은 macOS 호스트에서 `cargo test --workspace`(40건)와 `cargo clippy --workspace --all-targets -- -D warnings`, `pnpm --dir gui run build`, `pnpm --dir gui test`(브라우저 14건)를 통과합니다. 워커는 `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu`, `aarch64-pc-windows-msvc` 세 타깃에서 경고 없이 컴파일됩니다.

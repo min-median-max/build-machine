@@ -9,6 +9,15 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 > edited to describe the Rust implementation, which would make it false. What the
 > Rust rewrite has and has not been shown to do is directly below.
 
+## Checkout of another repository — 2026-10-04
+
+Platform: macOS 26.6.2 arm64 (controller and macOS worker code on the host; no VM and no `ci run`).
+
+- Red, against the unchanged implementation: `cargo test -p build-machine-core --locked --test workflow` failed 5 of 24 tests. `a_checkout_of_another_repository_is_read_with_its_ref_and_path` failed with `called Result::unwrap() on an Err value: actions/checkout@v4의 with 입력 'path'은 아직 지원하지 않아요`; `a_checkout_path_outside_the_workspace_fails_validation`, `ref_and_path_without_a_repository_fail_validation`, `a_checkout_ref_without_a_local_value_fails_validation` and `a_checkout_repository_must_be_owner_and_name` failed their message assertions with the same unsupported-input error. `cargo test -p build-machine-controller --locked --test replay` failed both tests with that error: `a_replay_bundles_every_repository_its_checkout_steps_name` and `a_repository_the_machine_does_not_map_fails_validation`. The worker test `crates/worker/tests/checkout.rs` did not compile: `error[E0432]: unresolved imports build_machine_worker::checkout::checkout_repository, build_machine_worker::checkout::RepositoryCheckout`.
+- Green: the core workflow tests passed 24 of 24, the controller replay tests 2 of 2 and the worker checkout tests 10 of 10. The worker tests check out a tag into `core` beside existing workspace files without the clone's uncommitted edit, a branch at `fetch-depth: 0`, a commit SHA, the bundle's `HEAD`, and an unknown ref and an occupied directory as explicit failures. `another_repository_is_checked_out_at_an_annotated_tag` was added after the implementation and is not Red evidence.
+- `cargo test --workspace --locked` passed 113 tests, and `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `build-machine ci validate /Users/maxkwon/Projects/soksak/sidecars/files --workflow .github/workflows/release.yml --event push --os macos` (sidecar-files `3c5863aefb8a161832542faa9b0d29af65a40fb8`, dirty) failed: `job release의 step 2 (actions/checkout@v4)의 with ref: Unsupported workflow context: github.ref_name. Only steps.<id>.outputs.<name> has a value in a local replay.` The `github` context has no local value yet (B2). The workflow also declares no smoke step and no smoke skip comment, which the gate refuses after the expression is accepted.
+
 ## Local environment recovery — 2026-09-30
 
 See [environment setup and recovery](ENVIRONMENT.md) for the repeatable procedure and GitHub Actions compatibility limits.

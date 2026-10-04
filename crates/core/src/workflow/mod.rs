@@ -7,12 +7,12 @@ pub mod stage;
 
 pub use adapter::{Adapter, STAGE_ORDER};
 pub use condition::{Condition, JobStatus, Outputs, Reference, Template};
-pub use parse::{checkout_inputs, names_secret, reads_input, Job, Step, Workflow, DEFAULT_JOB_TIMEOUT_MINUTES};
+pub use parse::{checkout_inputs, checkout_target, names_secret, reads_input, CheckoutTarget, Job, Step, Workflow, DEFAULT_JOB_TIMEOUT_MINUTES};
 pub use stage::{check_gates, jobs_for, stage_counts, stage_of, stages, stages_for};
 
 use crate::Platform;
 use anyhow::{bail, Context, Result};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The platform a runner label names, when it names one this machine drives.
@@ -35,6 +35,40 @@ pub fn platform_for_runner(label: &str) -> Option<Platform> {
 /// like. An empty set means no job named a runner this machine recognises.
 pub fn declared_platforms(workflow: &Workflow) -> BTreeSet<Platform> {
     workflow.jobs.iter().filter_map(|job| platform_for_runner(&job.runs_on)).collect()
+}
+
+/// The entry of `repositories` that names a repository. GitHub resolves an
+/// owner and a repository without regard to case, so the lookup does too.
+pub fn find_repository<'a, V>(repositories: &'a BTreeMap<String, V>, name: &str) -> Option<(&'a String, &'a V)> {
+    repositories.iter().find(|(key, _)| key.eq_ignore_ascii_case(name))
+}
+
+/// Every other repository the workflow's checkout steps name, by its
+/// `repositories` key, with the local clone that entry maps it to. A
+/// repository the map does not name has no history to check out, so it
+/// fails validation.
+pub fn checkout_repositories(workflow: &Workflow, repositories: &BTreeMap<String, String>) -> Result<BTreeMap<String, PathBuf>> {
+    let mut found = BTreeMap::new();
+    for step in workflow.jobs.iter().flat_map(|job| &job.steps).filter(|step| step.adapter == Adapter::Checkout) {
+        let Some(target) = checkout_target(&step.with)? else { continue };
+        let Some((key, clone)) = find_repository(repositories, &target.repository) else {
+            let known: Vec<&str> = repositories.keys().map(String::as_str).collect();
+            bail!(
+                "job {}의 step {} ({})이 checkout하는 {}가 machine.json repositories에 없어요. 이 저장소의 로컬 clone 경로를 등록해주세요. 등록된 저장소: {}",
+                step.job_id,
+                step.index,
+                step.name,
+                target.repository,
+                if known.is_empty() { "없음".to_owned() } else { known.join(", ") }
+            );
+        };
+        let clone = PathBuf::from(clone);
+        if !clone.is_absolute() {
+            bail!("machine.json repositories의 {key} 경로는 절대 경로여야 해요: {}", clone.display());
+        }
+        found.insert(key.clone(), clone);
+    }
+    Ok(found)
 }
 
 /// Read and validate a workflow file.

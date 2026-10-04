@@ -55,6 +55,18 @@ pub struct Snapshot {
     /// for a commit checked out detached.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkout_ref: Option<String>,
+    /// The history of each other repository the replay's checkout steps
+    /// name, by its `machine.json` `repositories` key.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repositories: BTreeMap<String, RepositoryHistory>,
+}
+
+/// The bundle of another repository's branches, tags and `HEAD`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryHistory {
+    pub bundle: String,
+    pub sha256: String,
 }
 
 pub fn sha256_bytes(data: &[u8]) -> String {
