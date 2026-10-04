@@ -128,6 +128,10 @@ impl Adapter {
             // `preview`, `token` and the timing inputs would deploy elsewhere
             // or wait on GitHub's deployment.
             Adapter::DeployPages => &["artifact_name"],
+            // The replay records the release of `files` and `body_path` under
+            // the replayed tag or `tag_name`; the other inputs would publish
+            // another release.
+            Adapter::Release => &["files", "body_path", "tag_name"],
             _ => return None,
         })
     }

@@ -119,7 +119,12 @@ pages action도 업로드의 `path`, `name`, `retention-days`와 배포의 `arti
 입력은 실패합니다. 업로드는 단계가 실행될 때의 사이트를 재현이 끝날 때까지 보관합니다.
 deploy-pages는 아무것도 배포하지 않고 그 산출물의 파일을 크기, SHA-256과 함께 결과의
 `deployments`에 dry run으로 기록하며, 재현에서 앞서 업로드한 pages 산출물이 없으면
-실패합니다. job의 `environment`(식 없는 이름 또는 `{name, url}`)는 제한으로 기록하며
+실패합니다. action-gh-release는 아무것도 게시하지 않습니다. tag는 재현한 tag나
+`tag_name`에서 가져오고, 둘 다 없는 branch에서는 action처럼 실패합니다. `files`의 각 줄이
+맞는 파일을 크기, SHA-256과 함께, `body_path` 파일과 같이 단계 출력에 dry run으로
+기록합니다. `files` 패턴은 한 경로 조각 안의 `*`와 `?`만 쓰고, 다른 glob 형식은 단계를
+실패시키며, 아무 파일에도 맞지 않는 패턴은 action이 경고하듯 출력에 밝힙니다.
+`files`, `body_path`, `tag_name` 외의 입력은 검증에서 실패합니다. job의 `environment`(식 없는 이름 또는 `{name, url}`)는 제한으로 기록하며
 로컬에는 영향이 없습니다.
 
 셸 `run` 단계는 쓰인 그대로, runner처럼 Linux와 macOS에서는 `bash -e`로,

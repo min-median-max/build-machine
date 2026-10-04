@@ -14,6 +14,7 @@ pub mod macos;
 pub mod package;
 pub mod pages;
 pub mod provision;
+pub mod release;
 pub mod run;
 pub mod runner;
 pub mod stream;

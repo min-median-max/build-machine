@@ -371,6 +371,28 @@ fn execute(
             ran.output = Some(summary);
             ran
         }
+        Adapter::Release => {
+            let reference = request.snapshot.checkout_ref.as_deref().unwrap_or("");
+            let release = crate::release::publish(source, &step.with, reference)?;
+            let mut summary = format!("dry-run: not published. The release {} holds {} assets:", release.tag, release.assets.len());
+            for asset in &release.assets {
+                summary.push_str(&format!("\n{} {} {}", asset.sha256, asset.size, asset.path));
+            }
+            if let Some(body) = &release.body {
+                summary.push_str(&format!("\nbody {} {} {}", body.sha256, body.size, body.path));
+            }
+            for pattern in &release.unmatched {
+                summary.push_str(&format!("\nPattern {pattern} does not match any files."));
+            }
+            println!("{summary}");
+            result.limits.push(format!(
+                "{}: dry-run: not published. The release {} and its assets are recorded in the step output.",
+                step.name, release.tag
+            ));
+            let mut ran = Ran::new(Outcome::PassedWithLimits);
+            ran.output = Some(summary);
+            ran
+        }
         adapter if adapter.is_external_service() => {
             result.limits.push(format!("{}: external GitHub service replaced by local artifact store", step.name));
             Ran::new(Outcome::PassedWithLimits)

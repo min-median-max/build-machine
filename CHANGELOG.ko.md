@@ -34,6 +34,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - 재현은 job이 끝나면 결과에 적힌 산출물을 옆으로 옮긴 뒤 그 job의 workspace를 지우고, `retention` byte 상한을 성공한 뒤뿐 아니라 시작하기 전에도 적용합니다. orm 재현 두 번이 Linux 머신에 21 GB의 workspace를 남겼습니다.
 - 재현 단계는 runner 이미지가 선언한 `/etc/environment`로 실행합니다. 관리 도구 디렉터리 뒤에 `/usr/sbin`, `/sbin`을 포함한 이미지의 `PATH`를 두고 `DEBIAN_FRONTEND=noninteractive`, `ACCEPT_EULA=Y`, `XDG_CONFIG_HOME`을 설정합니다. Linux 워커의 `runuser -l` 로그인은 `/usr/sbin`이 없는 login.defs `ENV_PATH`를 주어서 orm의 `command -v mysqld`가 아무것도 찾지 못했습니다.
 - 재현 단계는 머신이 자기 빌드에 쓰는 `NO_COLOR=1`을 더 이상 받지 않습니다. GitHub runner는 이 변수를 설정하지 않습니다. soksak의 repeat 테스트가 `FORCE_COLOR`를 정하자 node가 `NO_COLOR`를 무시한다는 경고를 출력했고, 그 경고가 테스트의 출력을 깨뜨렸습니다.
+- `softprops/action-gh-release`가 대신하는 release를 기록합니다. 재현한 tag나 `tag_name`의 tag와, `files`와 `body_path`의 파일을 크기, SHA-256과 함께 단계 출력에 dry run으로 남깁니다. 이전에는 "external GitHub service replaced by local artifact store"만 기록하고 아무것도 보관하지 않아서, 아무 파일에도 맞지 않는 `files` 패턴이 드러나지 않았고 rehearsal이 GitHub과 비교할 asset 목록이 없었습니다. 이제 `tag_name` 없는 branch의 재현은 action처럼 실패하고, `*`와 `?` 외의 glob 형식을 쓴 `files` 패턴은 단계를 실패시키며, `files`, `body_path`, `tag_name` 외의 입력은 검증에서 실패합니다.
 - Linux 게스트가 비운 공간을 Mac에 돌려줍니다. 컨트롤러가 setup, build, release, 재현 뒤에 워커의 새 권한 명령 `reclaim`(`fstrim --all`)을 실행하고, VM 디스크 중 Parallels online compaction이 꺼진 것을 켭니다. 이전에는 지운 파일이 VM 이미지에 할당된 채 남았습니다. 이미지의 겉보기 크기는 가장 컸던 크기에 머물고, 줄어드는 것은 할당된 블록(`du -k`)입니다.
 
 ## 0.1.0

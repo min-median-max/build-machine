@@ -709,3 +709,19 @@ fn a_deploy_pages_input_it_does_not_honour_fails_validation() {
     let error = workflow::load(&path, "push", None).unwrap_err();
     assert!(format!("{error:#}").contains("'preview'"), "{error:#}");
 }
+
+/// The release stand-in records `files` and `body_path` under the tag; an
+/// input that would publish another release fails validation.
+#[test]
+fn a_release_input_it_does_not_honour_fails_validation() {
+    let release = |with: &str| {
+        format!(
+            "# build-machine: skip build reason=fixture\n# build-machine: skip test reason=fixture\n# build-machine: skip smoke reason=fixture\nname: release\non:\n  push:\n    tags: ['v*']\njobs:\n  release:\n    runs-on: macos-15\n    steps:\n      - uses: actions/checkout@v4\n      - uses: softprops/action-gh-release@v2\n        with:\n{with}\n"
+        )
+    };
+    let (_directory, path) = write(&release("          files: dist/*\n          body_path: notes.md"));
+    workflow::load(&path, "push", None).unwrap();
+    let (_directory, path) = write(&release("          files: dist/*\n          draft: true"));
+    let error = workflow::load(&path, "push", None).unwrap_err();
+    assert!(format!("{error:#}").contains("'draft'"), "{error:#}");
+}

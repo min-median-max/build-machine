@@ -131,7 +131,14 @@ honour fails validation, as do the pages actions' inputs other than `path`,
 deployment. The upload keeps the site as it was when the step ran for the rest
 of the replay; deploy-pages deploys nothing and records that artifact's files
 with their sizes and SHA-256 in the result's `deployments` as a dry run, and
-fails when no pages artifact was uploaded earlier in the replay. A job's
+fails when no pages artifact was uploaded earlier in the replay.
+action-gh-release publishes nothing: it takes the tag from the replayed tag or
+`tag_name` and fails on a branch without one, as the action does, and records
+the files each line of `files` matches, with their sizes and SHA-256, and the
+`body_path` file in the step output as a dry run. A `files` pattern uses `*`
+and `?` within one path segment; other glob forms fail the step, and a pattern
+that matches no file is named in the output, as the action warns about it.
+Inputs other than `files`, `body_path` and `tag_name` fail validation. A job's
 `environment`, a name or `{name, url}` without expressions, is recorded as a
 limit and has no local effect.
 
