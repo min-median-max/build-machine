@@ -156,7 +156,11 @@ root. `repository` checks out another repository that `machine.json`
 SHA, the clone's `HEAD` when absent), from that clone's committed history.
 `ref` without `repository`, `submodules` and the other inputs that would check
 out something else fail validation. When a job ends, processes that still carry
-its `RUNNER_TRACKING_ID` are terminated, as a runner does (Linux).
+its `RUNNER_TRACKING_ID` are terminated, as a runner does (Linux), and its
+workspace is removed: the artifacts the result names are moved beside it first
+and the result points to them there. The `retention` byte cap of
+[machine.json](machine.json) is applied before a replay starts as well as after
+it.
 
 **Jobs** — a job may use `name`, `runs-on`, `needs`, `env`, `steps` and
 `timeout-minutes`; the workflow may use `name`, `run-name`, `on`, `env`,

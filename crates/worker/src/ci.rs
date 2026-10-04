@@ -551,6 +551,30 @@ fn record_in(stages: &mut BTreeMap<&'static str, Stage>, stage_name: &'static st
     });
 }
 
+/// End a job on this machine: move the artifacts it produced out of `work`
+/// into `keep`, under the same relative path, and remove `work`.
+///
+/// A job's workspace is a whole build — orm's Rust target alone is 7 GB — and
+/// a hosted runner discards it with the machine. Only what the result names is
+/// kept, and the result is updated to where it now is.
+pub fn finish_job(work: &Path, keep: &Path, artifacts: &mut [Artifact]) -> Result<()> {
+    for artifact in artifacts.iter_mut() {
+        let path = Path::new(&artifact.path);
+        let Ok(relative) = path.strip_prefix(work) else { continue };
+        let destination = keep.join(relative);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(path, &destination)
+            .with_context(|| format!("산출물을 옮기지 못했어요: {}", path.display()))?;
+        artifact.path = destination.to_string_lossy().into_owned();
+    }
+    if work.exists() {
+        std::fs::remove_dir_all(work).with_context(|| format!("job workspace를 지우지 못했어요: {}", work.display()))?;
+    }
+    Ok(())
+}
+
 pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
     tools.setup_system()?;
     tools.setup_user()?;
@@ -565,8 +589,12 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .context("프로젝트 이름이 없어요.")?;
-    let workspace = directory.join("work").join(&repository).join(&repository);
+    let work = directory.join("work");
+    let workspace = work.join(&repository).join(&repository);
     let base = replay_environment(tools);
+    // The byte cap of machine.json retention holds before a replay adds to the
+    // machine, not only after one succeeds.
+    crate::workspace::prune(&root, &directory, &tools.machine.retention)?;
 
     let mut result = PlatformResult::passed(build_machine_core::now(), String::new());
     result.limits.push(SEEDED_LIMIT.to_owned());
@@ -646,6 +674,12 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         #[cfg(target_os = "linux")]
         for process in crate::runner::terminate_orphans(&tracking) {
             println!("Terminate orphan process: pid {process}");
+        }
+        // The job's workspace and runner files go with the job; its artifacts stay.
+        finish_job(&work, &directory.join("artifacts").join(&job.id), &mut result.artifacts)?;
+        let runner_files = directory.join("runner").join(&job.id);
+        if runner_files.exists() {
+            std::fs::remove_dir_all(&runner_files)?;
         }
         #[cfg(not(target_os = "linux"))]
         result.limits.push(

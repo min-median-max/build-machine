@@ -140,7 +140,10 @@ mirror를 거쳐 가져옵니다. GitHub remote가 아니라는 점은 제한으
 저장소를 그 clone의 commit된 기록에서 `ref`(branch, tag 또는 commit SHA, 없으면 clone의
 `HEAD`)로 checkout합니다. `repository` 없는 `ref`, `submodules`처럼 다른 것을
 checkout하게 하는 입력은 검증에서 실패합니다. job이 끝나면 runner처럼 그 job의
-`RUNNER_TRACKING_ID`를 가진 프로세스를 종료합니다(Linux).
+`RUNNER_TRACKING_ID`를 가진 프로세스를 종료하고(Linux) workspace를 지웁니다. 결과에
+적힌 산출물은 먼저 그 옆으로 옮기고 결과가 옮긴 위치를 가리킵니다.
+[machine.json](machine.json) `retention`의 byte 상한은 재현이 끝난 뒤뿐 아니라 시작하기
+전에도 적용합니다.
 
 **Job** — job에는 `name`, `runs-on`, `needs`, `env`, `steps`, `timeout-minutes`를,
 workflow에는 `name`, `run-name`, `on`, `env`, `jobs`, `permissions`, `concurrency`를

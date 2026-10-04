@@ -110,3 +110,36 @@ fn every_step_has_a_step_summary_file() {
     let summary = environment.iter().find(|(key, _)| key == "GITHUB_STEP_SUMMARY").map(|(_, value)| value.clone()).unwrap();
     assert!(std::path::Path::new(&summary).is_file());
 }
+
+/// A job's workspace is removed when the job ends: two orm replays left 21 GB
+/// of workspaces, a Rust target of 7 GB each, in the Linux machine. What the
+/// result names — the artifacts with their checksums — is kept beside it.
+#[test]
+fn a_finished_job_leaves_only_its_artifacts() {
+    use build_machine_core::report::Artifact;
+    use build_machine_worker::ci::finish_job;
+    let directory = tempfile::tempdir().unwrap();
+    let work = directory.path().join("work");
+    let workspace = work.join("orm").join("orm");
+    let bundle = workspace.join("src-tauri/target/release/bundle/deb");
+    std::fs::create_dir_all(&bundle).unwrap();
+    std::fs::create_dir_all(workspace.join("target/debug")).unwrap();
+    std::fs::write(workspace.join("target/debug/huge"), vec![0u8; 4096]).unwrap();
+    std::fs::write(bundle.join("app.deb"), b"package").unwrap();
+    let sha256 = build_machine_core::source::sha256_file(&bundle.join("app.deb")).unwrap();
+    let elsewhere = directory.path().join("other.deb");
+    std::fs::write(&elsewhere, b"not this job's").unwrap();
+    let mut artifacts = vec![
+        Artifact { path: bundle.join("app.deb").to_string_lossy().into_owned(), sha256: sha256.clone(), size: 7 },
+        Artifact { path: elsewhere.to_string_lossy().into_owned(), sha256: "x".to_owned(), size: 1 },
+    ];
+    let keep = directory.path().join("artifacts").join("test");
+
+    finish_job(&work, &keep, &mut artifacts).unwrap();
+
+    assert!(!work.exists());
+    let kept = keep.join("orm/orm/src-tauri/target/release/bundle/deb/app.deb");
+    assert_eq!(artifacts[0].path, kept.to_string_lossy());
+    assert_eq!(build_machine_core::source::sha256_file(&kept).unwrap(), sha256);
+    assert_eq!(artifacts[1].path, elsewhere.to_string_lossy());
+}

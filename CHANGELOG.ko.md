@@ -31,6 +31,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - Linux 프로필이 자신이 대신하는 runner 이미지 `ubuntu-26.04-arm`(이미지 20260927.135.1)를 선언합니다. 공개된 toolset의 apt 패키지와 이미지 설치 스크립트가 설치하는 PHP 8.5 패키지이며, `setup`이 설치하고 `doctor`가 확인합니다. 머신에 이미지의 PHP 패키지가 들여오는 라이브러리가 없어서 setup-php의 PHP 8.4 캐시 빌드가 "libsodium.so.23: cannot open shared object file"로 실패했습니다. 이미지에는 있고 머신은 제공하지 않는 것(컴파일러, tool cache, Docker, 브라우저, 데이터베이스 서비스, 이미지의 PHP 설정)은 `machine.json`에 적고 그 runner의 job을 재현할 때마다 제한으로 기록합니다.
 - setup-php가 PHP 릴리스를 `php`로 정하기 전에 실행되는지(`php<v> -v`와 선언한 확장) 확인합니다. 실행되지 않는 릴리스는 `ldd`가 보고한 없는 라이브러리를 밝혀 단계를 실패시키고, alternatives를 원래대로 되돌립니다. 이전에는 시작하지 못하는 8.4 빌드로 `php`를 바꿔서 그 뒤 머신의 모든 `php` 호출이 실패했습니다.
 - runner 이미지의 패키지를 actions/runner-images처럼 `apt-get install --no-install-recommends`와 phased update 포함으로 설치합니다. 이전에는 apt의 추천 패키지까지 설치해서 이미지에 없는 패키지가 들어왔습니다(Linux 머신에서 `debhelper`부터 `ssh-import-id`까지 22개). 머신 자체의 패키지는 apt 기본값을 유지합니다.
+- 재현은 job이 끝나면 결과에 적힌 산출물을 옆으로 옮긴 뒤 그 job의 workspace를 지우고, `retention` byte 상한을 성공한 뒤뿐 아니라 시작하기 전에도 적용합니다. orm 재현 두 번이 Linux 머신에 21 GB의 workspace를 남겼습니다.
 
 ## 0.1.0
 
