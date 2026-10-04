@@ -6,7 +6,8 @@
 
 use build_machine_core::workflow::{Adapter, Step};
 use build_machine_worker::actions::{
-    declared_version, go_mod_version, listed_checksum, php_build, php_build_name, php_extensions, php_plan,
+    alternative_value, declared_version, go_mod_version, listed_checksum, missing_libraries, php_build, php_build_name,
+    php_extensions, php_plan,
     php_version, resolve_go, resolve_node, version_spec, GoArchive,
 };
 
@@ -155,4 +156,23 @@ fn the_php_plan_reads_the_version_file_and_refuses_what_it_does_not_install() {
     assert!(php_plan(&tools, &read).is_err());
     let coverage = step(Adapter::PhpSetup, &[("php-version", "8.5"), ("coverage", "xdebug")]);
     assert!(php_plan(&coverage, &read).is_err());
+}
+
+/// A PHP that cannot start is named by the libraries it lacks, as `ldd`
+/// reports them, so the failed step says what the machine is missing.
+#[test]
+fn missing_libraries_are_read_from_ldd() {
+    let ldd = "\tlinux-vdso.so.1 (0x0000ffff)\n\tlibargon2.so.1 => not found\n\tlibsodium.so.23 => not found\n\tlibc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x0000ffff)\n";
+    assert_eq!(missing_libraries(ldd), ["libargon2.so.1", "libsodium.so.23"]);
+    assert!(missing_libraries("\tlibc.so.6 => /lib/libc.so.6 (0x1)\n").is_empty());
+}
+
+/// The selection setup-php changes is read first, so a PHP that fails its
+/// check leaves the machine with the selection it had.
+#[test]
+fn the_current_alternative_is_read_from_its_query() {
+    let query = "Name: php\nLink: /usr/bin/php\nStatus: manual\nBest: /usr/bin/php8.5\nValue: /usr/bin/php8.5\n\nAlternative: /usr/bin/php8.5\nPriority: 85\n";
+    assert_eq!(alternative_value(query).as_deref(), Some("/usr/bin/php8.5"));
+    assert_eq!(alternative_value("Name: php\nValue: none\n"), None);
+    assert_eq!(alternative_value(""), None);
 }

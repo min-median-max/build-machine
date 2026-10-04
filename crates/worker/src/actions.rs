@@ -415,6 +415,96 @@ if ! apt-get check 2>/dev/null; then
 fi
 "#;
 
+/// The libraries `ldd` reports as not found.
+pub fn missing_libraries(ldd: &str) -> Vec<String> {
+    ldd.lines()
+        .filter_map(|line| line.trim().strip_suffix("=> not found").map(|name| name.trim().to_owned()))
+        .collect()
+}
+
+/// The program an alternative currently selects, from `update-alternatives
+/// --query`. `None` when it selects nothing.
+pub fn alternative_value(query: &str) -> Option<String> {
+    query
+        .lines()
+        .find_map(|line| line.strip_prefix("Value: "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "none")
+        .map(str::to_owned)
+}
+
+/// The programs setup-php switches between releases.
+#[cfg(target_os = "linux")]
+const PHP_TOOLS: [&str; 7] = ["php", "phar", "phar.phar", "php-cgi", "php-config", "phpize", "phpdbg"];
+
+/// What each PHP program selects now.
+#[cfg(target_os = "linux")]
+fn php_selection(environment: &[(String, String)]) -> Vec<(&'static str, Option<String>)> {
+    PHP_TOOLS
+        .iter()
+        .map(|tool| {
+            let query = stream::capture("update-alternatives", &["--query".to_owned(), (*tool).to_owned()], environment);
+            (*tool, query.ok().and_then(|text| alternative_value(&text)))
+        })
+        .collect()
+}
+
+/// Put the selection back as it was before this step: what was selected is
+/// selected again, and an alternative this step registered where there was
+/// none is removed.
+#[cfg(target_os = "linux")]
+fn restore_php_selection(previous: &[(&'static str, Option<String>)], version: &str, environment: &[(String, String)]) -> Result<()> {
+    for (tool, selected) in previous {
+        match selected {
+            Some(program) => as_root("update-alternatives", &["--set", tool, program], environment)?,
+            None => {
+                let program = format!("/usr/bin/{tool}{version}");
+                let registered = stream::capture("update-alternatives", &["--list".to_owned(), (*tool).to_owned()], environment)
+                    .is_ok_and(|list| list.lines().any(|line| line.trim() == program));
+                if registered {
+                    as_root("update-alternatives", &["--remove", tool, &program], environment)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Prove the release runs, with the declared extensions, before it becomes
+/// `php`. A failure names the libraries the machine lacks.
+#[cfg(target_os = "linux")]
+fn verify_php(version: &str, extensions: &[String], environment: &[(String, String)]) -> Result<()> {
+    let program = format!("/usr/bin/php{version}");
+    let ldd = |path: &str| stream::capture("ldd", &[path.to_owned()], environment).map(|text| missing_libraries(&text)).unwrap_or_default();
+    if let Err(error) = stream::capture(&program, &["-v".to_owned()], environment) {
+        let missing = ldd(&program);
+        if missing.is_empty() {
+            bail!("PHP {version}가 실행되지 않아요: {error:#}");
+        }
+        bail!("PHP {version}가 실행되지 않아요. 이 머신에 없는 라이브러리: {}", missing.join(", "));
+    }
+    let modules = stream::capture(&program, &["-m".to_owned()], environment)?.to_ascii_lowercase();
+    let loaded: Vec<&str> = modules.lines().map(str::trim).collect();
+    let absent: Vec<&String> = extensions.iter().filter(|extension| !loaded.contains(&extension.as_str())).collect();
+    if absent.is_empty() {
+        return Ok(());
+    }
+    let directory = stream::capture(&format!("/usr/bin/php-config{version}"), &["--extension-dir".to_owned()], environment)
+        .map(|text| text.trim().to_owned())
+        .unwrap_or_default();
+    let mut details = Vec::new();
+    for extension in &absent {
+        let library = format!("{directory}/{extension}.so");
+        let missing = if Path::new(&library).exists() { ldd(&library) } else { Vec::new() };
+        details.push(if missing.is_empty() {
+            format!("{extension} (not in this build; setup-php would install it from ondrej/php or PECL, which this adapter does not do)")
+        } else {
+            format!("{extension} (missing libraries: {})", missing.join(", "))
+        });
+    }
+    bail!("PHP {version}에 선언한 확장이 없어요: {}", details.join("; "))
+}
+
 /// Run a command as root through `sudo`, which a runner's account may use
 /// without a password; a password prompt fails the step instead of waiting.
 #[cfg(target_os = "linux")]
@@ -435,6 +525,9 @@ fn as_root(program: &str, arguments: &[&str], environment: &[(String, String)]) 
 pub fn setup_php(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runner) -> Result<Installed> {
     let (version, extensions) = php_plan(step, &read_in(workspace))?;
     let environment = runner_environment(tools, runner)?;
+    // The install registers alternatives; what was selected before is kept
+    // to put back if the release does not run.
+    let previous = php_selection(&environment);
     let present = Path::new(&format!("/usr/bin/php{version}")).exists()
         && Path::new(&format!("/usr/bin/php-config{version}")).exists();
     let source = if present {
@@ -455,11 +548,20 @@ pub fn setup_php(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runn
         let build = php_build(&release, &name)?;
         let archive = tools.download(&build.url, &build.sha256, &name)?;
         let archive_text = archive.to_string_lossy().into_owned();
-        as_root("bash", &["-c", PHP_BUILD_INSTALL, "php-build-install", &archive_text, &version], &environment)?;
+        let installed = as_root("bash", &["-c", PHP_BUILD_INSTALL, "php-build-install", &archive_text, &version], &environment);
+        if let Err(error) = installed {
+            restore_php_selection(&previous, &version, &environment)?;
+            return Err(error);
+        }
         format!("{name} of shivammathur/php-ubuntu {}, sha256 {}", release["tag_name"].as_str().unwrap_or_default(), build.sha256)
     };
+    if let Err(error) = verify_php(&version, &extensions, &environment) {
+        restore_php_selection(&previous, &version, &environment)
+            .context("PHP 선택을 이전 상태로 되돌리지 못했어요")?;
+        return Err(error.context("이전 PHP 선택은 그대로 두었어요"));
+    }
     // setup-php's switch_version: the release's programs become the defaults.
-    for tool in ["php", "phar", "phar.phar", "php-cgi", "php-config", "phpize", "phpdbg"] {
+    for tool in PHP_TOOLS {
         let program = format!("/usr/bin/{tool}{version}");
         if Path::new(&program).exists() {
             as_root("update-alternatives", &["--set", tool, &program], &environment)?;
@@ -472,15 +574,6 @@ pub fn setup_php(step: &Step, workspace: &Path, tools: &Tools, runner: &mut Runn
         &["-r", "echo 'PHP ', PHP_MAJOR_VERSION, '.', PHP_MINOR_VERSION, PHP_EOL;"],
         &format!("PHP {version}"),
     )?;
-    let modules = capture_in(tools, runner, "php", &["-m"])?.to_ascii_lowercase();
-    let loaded: Vec<&str> = modules.lines().map(str::trim).collect();
-    let absent: Vec<&String> = extensions.iter().filter(|extension| !loaded.contains(&extension.as_str())).collect();
-    if !absent.is_empty() {
-        bail!(
-            "PHP {version}에 선언한 확장이 없어요: {}. setup-php는 이것을 ondrej/php 저장소나 PECL에서 설치하는데, 이 어댑터는 그렇게 하지 않아요.",
-            absent.iter().map(|value| value.as_str()).collect::<Vec<_>>().join(", ")
-        );
-    }
     let composer = install_composer(tools)?;
     runner.add_path(composer.0.clone());
     Ok(Installed {

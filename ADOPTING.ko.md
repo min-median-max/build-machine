@@ -48,7 +48,9 @@ workflow 재현은 다릅니다. `actions/setup-node`, `actions/setup-go`,
 있는 릴리스는 그것으로 전환하고, 그 밖의 릴리스는 이 Ubuntu 버전과 아키텍처용
 setup-php 캐시 빌드(shivammathur/php-ubuntu)를 GitHub가 공개한 sha256과 대조한 뒤
 runner처럼 비밀번호 없는 `sudo`로 설치합니다. 그런 빌드가 없는 릴리스나 빌드에 없는
-선언 확장은 이유와 함께 그 단계를 실패시키고, 다른 것으로 대신하지 않습니다.
+선언 확장은 이유와 함께 그 단계를 실패시키고, 다른 것으로 대신하지 않습니다. 그
+릴리스는 `php`가 되기 전에 선언한 확장과 함께 실행되어야 하며, 실행되지 않으면 머신에
+없는 라이브러리를 밝혀 단계를 실패시키고 이전 선택을 그대로 둡니다.
 
 그 빌드는 runner 이미지에 있는 라이브러리를 불러옵니다. 그래서 [machine.json](machine.json)의
 Linux 프로필은 자신이 대신하는 이미지(`image`: `ubuntu-26.04-arm`, 공개된 toolset의 apt

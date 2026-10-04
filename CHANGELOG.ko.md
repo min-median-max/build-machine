@@ -23,6 +23,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - `shivammathur/setup-php`가 hosted Ubuntu runner에서 setup-php가 가져오는 곳에서 PHP를 가져옵니다. 머신에 이미 있는 릴리스는 그것으로 전환하고, 그 밖의 릴리스는 머신의 Ubuntu 버전과 아키텍처용 setup-php 캐시 빌드(shivammathur/php-ubuntu)를 GitHub가 그 asset에 공개한 sha256과 대조한 뒤 setup-php 설치 스크립트처럼 설치합니다. 이전에는 Ubuntu 버전마다 PHP 릴리스가 하나뿐인 배포판 apt 저장소에서 설치해서, Ubuntu 26.04에서는 8.5만 있어 orm의 최저 릴리스 검사가 8.4를 얻을 수 없었습니다. 머신용 빌드가 없는 릴리스나 빌드에 없는 선언 확장은 그 이유와 함께 단계를 실패시킵니다. 버전이 앞 단계의 출력에서 올 수 있으므로 어댑터는 이제 runner처럼 단계가 실행될 때 비밀번호 없는 `sudo`로 실행하며, 재현 전에 PHP를 설치하던 권한 단계 `ci-system`은 제거했습니다.
 - Ubuntu runner 라벨이 머신과 다른 Ubuntu 릴리스나 아키텍처를 가리키는 job(Ubuntu 26.04의 `ubuntu-24.04-arm`, `ubuntu-latest`, ARM64의 x64 라벨)은 그 차이를 제한으로 기록합니다. runner처럼 모든 단계에 `$GITHUB_STEP_SUMMARY` 파일이 있습니다. 거기에 덧붙이는 단계는 설정되지 않은 변수 때문에 실패했습니다.
 - Linux 프로필이 자신이 대신하는 runner 이미지 `ubuntu-26.04-arm`(이미지 20260927.135.1)를 선언합니다. 공개된 toolset의 apt 패키지와 이미지 설치 스크립트가 설치하는 PHP 8.5 패키지이며, `setup`이 설치하고 `doctor`가 확인합니다. 머신에 이미지의 PHP 패키지가 들여오는 라이브러리가 없어서 setup-php의 PHP 8.4 캐시 빌드가 "libsodium.so.23: cannot open shared object file"로 실패했습니다. 이미지에는 있고 머신은 제공하지 않는 것(컴파일러, tool cache, Docker, 브라우저, 데이터베이스 서비스, 이미지의 PHP 설정)은 `machine.json`에 적고 그 runner의 job을 재현할 때마다 제한으로 기록합니다.
+- setup-php가 PHP 릴리스를 `php`로 정하기 전에 실행되는지(`php<v> -v`와 선언한 확장) 확인합니다. 실행되지 않는 릴리스는 `ldd`가 보고한 없는 라이브러리를 밝혀 단계를 실패시키고, alternatives를 원래대로 되돌립니다. 이전에는 시작하지 못하는 8.4 빌드로 `php`를 바꿔서 그 뒤 머신의 모든 `php` 호출이 실패했습니다.
 
 ## 0.1.0
 
