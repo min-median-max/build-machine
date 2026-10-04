@@ -46,7 +46,7 @@ fn what_a_step_writes_reaches_the_steps_after_it() {
     let path_file = PathBuf::from(value(&environment, "GITHUB_PATH").unwrap());
     std::fs::write(&env_file, "MYSQL_DSN=root@tcp(127.0.0.1:3306)/orm_test\n").unwrap();
     std::fs::write(&path_file, "/usr/lib/postgresql/17/bin\n").unwrap();
-    runner.finish_step(&first).unwrap();
+    runner.finish_step(&first, None).unwrap();
     runner.add_path(PathBuf::from("/opt/go/bin"));
 
     let second = runner.begin_step(2).unwrap();
@@ -67,7 +67,7 @@ fn a_new_replay_starts_without_what_an_earlier_one_set() {
     let mut runner = Runner::new(&state, directory.path(), Platform::Linux).unwrap();
     let files = runner.begin_step(1).unwrap();
     std::fs::write(&files.env, "LEFTOVER=1\n").unwrap();
-    runner.finish_step(&files).unwrap();
+    runner.finish_step(&files, None).unwrap();
     std::fs::write(state.join("stale"), "x").unwrap();
 
     let fresh = Runner::new(&state, directory.path(), Platform::Linux).unwrap();
@@ -88,4 +88,30 @@ fn a_workflow_step_runs_in_the_runners_shell() {
         assert_eq!(program, "bash");
         assert_eq!(arguments, ["-e", "-c", "echo ${UNSET_ON_PURPOSE:-}"]);
     }
+}
+
+/// A step with an `id` sets outputs through `$GITHUB_OUTPUT`, in the format of
+/// `$GITHUB_ENV`, and the steps after it read them as
+/// `steps.<id>.outputs.<name>`. A step without an `id` has no outputs.
+#[test]
+fn what_a_step_writes_to_github_output_is_its_outputs() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut runner = Runner::new(&directory.path().join("runner"), directory.path(), Platform::Linux).unwrap();
+
+    let first = runner.begin_step(1).unwrap();
+    let output = PathBuf::from(value(&runner.environment(&[], &first), "GITHUB_OUTPUT").unwrap());
+    std::fs::write(&output, "version=8.4\nnotes<<EOF\na\nb\nEOF\n").unwrap();
+    runner.finish_step(&first, Some("php-min")).unwrap();
+
+    let second = runner.begin_step(2).unwrap();
+    let path = PathBuf::from(value(&runner.environment(&[], &second), "GITHUB_OUTPUT").unwrap());
+    assert_ne!(path, output);
+    std::fs::write(&path, "ignored=1\n").unwrap();
+    runner.finish_step(&second, None).unwrap();
+
+    assert_eq!(runner.outputs()["php-min"]["version"], "8.4");
+    assert_eq!(runner.outputs()["php-min"]["notes"], "a\nb");
+    assert_eq!(runner.outputs().len(), 1);
+    let template = build_machine_core::workflow::Template::parse("${{ steps.php-min.outputs.version }}").unwrap();
+    assert_eq!(template.render(runner.outputs()), "8.4");
 }

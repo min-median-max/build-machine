@@ -6,7 +6,7 @@
 //! changed into something the machine can run.
 
 use super::adapter::Adapter;
-use super::condition::Condition;
+use super::condition::{Condition, Outputs, Reference, Template};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -185,6 +185,67 @@ fn skip_comments(source: &str) -> BTreeMap<String, String> {
     skips
 }
 
+/// A value that names a secret or the GitHub token. Neither exists locally:
+/// an `env` value of one is empty in a replay, as an unset secret is on
+/// GitHub, and the replay records that as a limit.
+pub fn names_secret(value: &str) -> bool {
+    value.contains("secrets.") || value.contains("github.token")
+}
+
+/// Whether an adapter reads this `with` input. An input it does not read is
+/// never evaluated, so an expression in it has no effect on the replay.
+pub fn reads_input(adapter: Adapter, input: &str) -> bool {
+    match adapter {
+        Adapter::TauriBuild => input == "args",
+        other => other.inputs().is_some_and(|inputs| inputs.contains(&input)),
+    }
+}
+
+/// Check that every step output an expression reads belongs to an earlier
+/// `run` step of the same job with that `id`.
+fn check_references(references: Vec<Reference>, defined: &[String], owner: &str) -> Result<()> {
+    for reference in references {
+        if !defined.contains(&reference.step) {
+            bail!(
+                "{owner}: steps.{}.outputs.{}의 {}는 이 job에서 앞선 run 단계의 id가 아니에요.",
+                reference.step,
+                reference.output,
+                reference.step
+            );
+        }
+    }
+    Ok(())
+}
+
+fn check_template(text: &str, defined: &[String], owner: &str) -> Result<()> {
+    let template = Template::parse(text).with_context(|| owner.to_owned())?;
+    check_references(template.references(), defined, owner)
+}
+
+impl Step {
+    /// The step with the outputs of the steps before it in place, as GitHub
+    /// evaluates a step's expressions just before it runs. Secret values are
+    /// left for the runner to empty; inputs the adapter does not read are left
+    /// as written.
+    pub fn resolve(&self, outputs: &Outputs) -> Result<Step> {
+        let render = |text: &str| -> Result<String> { Ok(Template::parse(text)?.render(outputs)) };
+        let mut step = self.clone();
+        step.run = self.run.as_deref().map(render).transpose()?;
+        step.working_directory = self.working_directory.as_deref().map(render).transpose()?;
+        for (key, value) in step.env.iter_mut() {
+            if !names_secret(value) {
+                *value = render(value).with_context(|| format!("env {key}"))?;
+            }
+        }
+        for (key, value) in step.with.iter_mut() {
+            if reads_input(self.adapter, key) {
+                *value = render(value).with_context(|| format!("with {key}"))?;
+            }
+        }
+        Ok(step)
+    }
+}
+
 fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&Yaml>) -> Result<Vec<Step>> {
     let Some(Yaml::Sequence(items)) = value else {
         bail!("각 job에는 하나 이상의 steps가 필요해요.");
@@ -193,6 +254,13 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
         bail!("각 job에는 하나 이상의 steps가 필요해요.");
     }
     let mut steps = Vec::new();
+    // The ids of the earlier `run` steps, whose outputs later steps may read.
+    let mut defined: Vec<String> = Vec::new();
+    for (key, value) in job_env {
+        if !names_secret(value) {
+            check_template(value, &[], &format!("job {job_id}의 env {key}"))?;
+        }
+    }
     for (position, item) in items.iter().enumerate() {
         let index = position as u32 + 1;
         if as_map(item).is_none() {
@@ -223,11 +291,37 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
                 bail!("{name}의 with 입력 '{input}'은 아직 지원하지 않아요. 지원 입력: {}", accepted.join(", "));
             }
         }
+        let owner = format!("job {job_id}의 step {index} ({name})");
         let condition = text(get(item, "if"));
-        Condition::parse(condition.as_deref()).with_context(|| format!("job {job_id}의 step {index} ({name})"))?;
+        let parsed = Condition::parse(condition.as_deref()).with_context(|| owner.clone())?;
+        check_references(parsed.references(), &defined, &owner)?;
+        for text in [&run, &text(get(item, "working-directory"))].into_iter().flatten() {
+            check_template(text, &defined, &owner)?;
+        }
+        let env = string_map(get(item, "env"));
+        for (key, value) in &env {
+            if !names_secret(value) {
+                check_template(value, &defined, &format!("{owner}의 env {key}"))?;
+            }
+        }
+        for (key, value) in &with {
+            if reads_input(adapter, key) {
+                check_template(value, &defined, &format!("{owner}의 with {key}"))?;
+            }
+        }
+        let id = text(get(item, "id"));
+        if let Some(id) = &id {
+            if steps.iter().any(|step: &Step| step.id.as_ref() == Some(id)) {
+                bail!("{owner}: id {id}가 이 job에서 두 번 쓰였어요.");
+            }
+            // Only a `run` step writes outputs here; no adapter sets any.
+            if adapter == Adapter::Run {
+                defined.push(id.clone());
+            }
+        }
         steps.push(Step {
             index,
-            id: text(get(item, "id")),
+            id,
             position: 0,
             timeout_minutes: timeout_minutes(get(item, "timeout-minutes"), &format!("job {job_id}의 step {index}"))?,
             name,
@@ -238,7 +332,7 @@ fn parse_steps(job_id: &str, job_env: &BTreeMap<String, String>, value: Option<&
             working_directory: text(get(item, "working-directory")),
             condition,
             reason: None,
-            env: string_map(get(item, "env")),
+            env,
             with,
             job_env: job_env.clone(),
             job_id: job_id.to_owned(),

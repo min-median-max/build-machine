@@ -140,10 +140,17 @@ other job key (`if`, `continue-on-error`, `defaults`, `outputs`, `environment`,
 `shell` and `continue-on-error`. These fail validation.
 
 **Expressions** — an `if:` may use `success()`, `failure()`, `always()`,
-`cancelled()`, `true`, `false`, `!`, `&&`, `||` and parentheses, inside `${{ }}`
-or not. After a failed step, the steps after it run only when their `if:`
-says so, as on a runner, so `if: ${{ !cancelled() }}` keeps reporting. A
-condition that reads any other context fails validation. A condition that
+`cancelled()`, literals, `!`, `&&`, `||`, `==`, `!=` and parentheses, inside
+`${{ }}` or not. After a failed step, the steps after it run only when their
+`if:` says so, as on a runner, so `if: ${{ !cancelled() }}` keeps reporting.
+
+A `run` step with an `id` sets outputs through `$GITHUB_OUTPUT`, and a later
+step of the same job reads them as `${{ steps.<id>.outputs.<name> }}` in its
+`if:`, `run:`, `env`, `working-directory` and the `with` inputs its adapter
+reads. Validation checks that the step exists earlier in the job; the value is
+filled in just before the step runs, and an output the step did not write is
+empty, as on GitHub. An expression that reads any other context fails
+validation. A condition that
 depends on a secret is treated as false and recorded as a limit, so a signing
 step is skipped rather than half-attempted.
 

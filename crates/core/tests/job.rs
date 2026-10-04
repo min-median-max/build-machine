@@ -89,7 +89,7 @@ fn timeouts_are_the_workflow_s_own_with_github_s_job_default() {
 #[test]
 fn a_cancelled_job_runs_only_steps_that_ask_to_run_after_cancellation() {
     use workflow::Condition;
-    let runs = |text: Option<&str>, status: JobStatus| Condition::parse(text).unwrap().runs(status);
+    let runs = |text: Option<&str>, status: JobStatus| Condition::parse(text).unwrap().runs(status, &Default::default());
     assert!(!runs(None, JobStatus::Cancelled));
     assert!(!runs(Some("${{ !cancelled() }}"), JobStatus::Cancelled));
     assert!(!runs(Some("failure()"), JobStatus::Cancelled));

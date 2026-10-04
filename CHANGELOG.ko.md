@@ -17,6 +17,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - 시간 제한은 workflow의 것입니다. job은 자신의 `timeout-minutes` 또는 GitHub의 360분 동안, 단계는 job에 남은 시간 안에서 자신의 `timeout-minutes`만큼 실행합니다. 이전에는 어떤 workflow도 선언하지 않은 스테이지별 고정 제한(test 단계 30분)으로 단계를 끊었습니다. 자신의 제한을 넘은 단계는 실패하고, 제한을 넘은 job은 취소되어 `cancelled()`가 참이 되며 그 뒤로는 취소 뒤에도 실행하는 단계만 실행합니다.
 - 재현이 구현하지 않은 job 키와 workflow 키는 검증에서 실패합니다. job의 `if`, `continue-on-error`, `defaults`, `outputs`, `environment`와 workflow `defaults`는 무시됐습니다. workflow `env`도 무시됐고 이제 모든 단계에 전달됩니다. job마다 `$GITHUB_ENV`, `$GITHUB_PATH`, 상태를 따로 두고, job은 `needs`의 job이 성공했을 때만 실행하며, 다른 운영체제의 job을 기다리는 job은 검증에서 실패합니다.
 - 단계는 프로세스가 끝나면 끝납니다. 단계의 출력을 잡고 있는 백그라운드 프로세스(`make test-servers`가 남기는 로그 reader)가 끝날 때까지 단계가 끝나지 않았습니다. 이제 GitHub runner처럼 출력을 5초 더 읽고, 그 프로세스는 그대로 둡니다.
+- 단계 출력이 GitHub처럼 동작합니다. `id`가 있는 `run` 단계가 `$GITHUB_OUTPUT`에 쓰고, 같은 job의 이후 단계가 `if:`, `run:`, `env`, `working-directory`, 어댑터가 읽는 `with` 입력에서 `${{ steps.<id>.outputs.<name> }}`을 읽습니다. `==`, `!=`, 문자열·숫자 리터럴과 GitHub의 `&&`·`||` 값 규칙도 읽습니다. 검증은 참조를 확인하고, 값은 단계를 실행할 때 채웁니다. orm의 `setup-php` 단계는 검증이 받아들일 수 없던 `php-min` 단계의 출력에서 버전을 받습니다. 로컬 값이 없는 `env` 표현식은 실행 중에 빈 값으로 바뀌었는데, 이제 `run:`이나 `working-directory`의 표현식처럼 검증에서 실패합니다.
 
 ## 0.1.0
 

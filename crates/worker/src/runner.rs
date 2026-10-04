@@ -4,9 +4,12 @@
 //! `GITHUB_ENV` sets variables and `GITHUB_PATH` puts directories in front of
 //! PATH. A setup action does the same through its toolkit. Without them a step
 //! that writes to `"$GITHUB_ENV"` fails on an unset variable, and an installed
-//! tool is invisible to the next step, so both are part of the replay.
+//! tool is invisible to the next step, so both are part of the replay. A step
+//! with an `id` also sets outputs through `GITHUB_OUTPUT`, which later steps
+//! read as `steps.<id>.outputs.<name>`.
 
 use anyhow::{bail, Context, Result};
+use build_machine_core::workflow::Outputs;
 use build_machine_core::Platform;
 use std::path::{Path, PathBuf};
 
@@ -19,12 +22,15 @@ pub struct Runner {
     variables: Vec<(String, String)>,
     /// Directories steps have added, the most recent first, as GitHub orders them.
     paths: Vec<PathBuf>,
+    /// What each step with an `id` wrote to `GITHUB_OUTPUT`.
+    outputs: Outputs,
 }
 
-/// The two files one step may write.
+/// The files one step may write.
 pub struct StepFiles {
     pub env: PathBuf,
     pub path: PathBuf,
+    pub output: PathBuf,
 }
 
 impl Runner {
@@ -42,6 +48,7 @@ impl Runner {
             platform,
             variables: Vec::new(),
             paths: Vec::new(),
+            outputs: Outputs::new(),
         })
     }
 
@@ -56,18 +63,32 @@ impl Runner {
         let files = StepFiles {
             env: self.directory.join(format!("env-{position}")),
             path: self.directory.join(format!("path-{position}")),
+            output: self.directory.join(format!("output-{position}")),
         };
         std::fs::write(&files.env, "")?;
         std::fs::write(&files.path, "")?;
+        std::fs::write(&files.output, "")?;
         Ok(files)
     }
 
+    /// The outputs the steps so far have set, by step id.
+    pub fn outputs(&self) -> &Outputs {
+        &self.outputs
+    }
+
     /// Apply what a step wrote. A malformed file fails the step that wrote it.
-    pub fn finish_step(&mut self, files: &StepFiles) -> Result<()> {
+    /// Outputs are kept for a step with an `id`, the only way to read them.
+    pub fn finish_step(&mut self, files: &StepFiles, id: Option<&str>) -> Result<()> {
         let env = std::fs::read_to_string(&files.env).unwrap_or_default();
         let path = std::fs::read_to_string(&files.path).unwrap_or_default();
+        let output = std::fs::read_to_string(&files.output).unwrap_or_default();
         std::fs::remove_file(&files.env).ok();
         std::fs::remove_file(&files.path).ok();
+        std::fs::remove_file(&files.output).ok();
+        let outputs = parse_env_file(&output).context("GITHUB_OUTPUT를 읽지 못했어요")?;
+        if let Some(id) = id {
+            self.outputs.entry(id.to_owned()).or_default().extend(outputs);
+        }
         for (key, value) in parse_env_file(&env).context("GITHUB_ENV를 읽지 못했어요")? {
             self.variables.retain(|(existing, _)| existing != &key);
             self.variables.push((key, value));
@@ -89,7 +110,7 @@ impl Runner {
         for (key, value) in &self.variables {
             set(&mut environment, key, value.clone());
         }
-        let runner: [(&str, String); 8] = [
+        let runner: [(&str, String); 9] = [
             ("GITHUB_ACTIONS", "true".to_owned()),
             ("CI", "true".to_owned()),
             ("GITHUB_WORKSPACE", self.workspace.to_string_lossy().into_owned()),
@@ -98,6 +119,7 @@ impl Runner {
             ("RUNNER_ARCH", runner_arch().to_owned()),
             ("GITHUB_ENV", files.env.to_string_lossy().into_owned()),
             ("GITHUB_PATH", files.path.to_string_lossy().into_owned()),
+            ("GITHUB_OUTPUT", files.output.to_string_lossy().into_owned()),
         ];
         for (key, value) in runner {
             set(&mut environment, key, value);

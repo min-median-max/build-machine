@@ -465,11 +465,13 @@ jobs:
 fn conditions_follow_the_job_status_as_github_evaluates_them() {
     use workflow::{Condition, JobStatus};
     let runs = |text: &str, failed: bool| {
-        Condition::parse(Some(text)).unwrap().runs(if failed { JobStatus::Failure } else { JobStatus::Success })
+        Condition::parse(Some(text))
+            .unwrap()
+            .runs(if failed { JobStatus::Failure } else { JobStatus::Success }, &Default::default())
     };
     // No condition is success().
-    assert!(Condition::parse(None).unwrap().runs(JobStatus::Success));
-    assert!(!Condition::parse(None).unwrap().runs(JobStatus::Failure));
+    assert!(Condition::parse(None).unwrap().runs(JobStatus::Success, &Default::default()));
+    assert!(!Condition::parse(None).unwrap().runs(JobStatus::Failure, &Default::default()));
     // orm's later steps run after a failure, so one run reports every result.
     assert!(runs("${{ !cancelled() }}", true));
     assert!(runs("${{ !cancelled() }}", false));
@@ -483,7 +485,7 @@ fn conditions_follow_the_job_status_as_github_evaluates_them() {
     assert!(runs("success() || failure()", true));
     assert!(!runs("!(always())", false));
     assert_eq!(Condition::parse(Some("${{ secrets.TOKEN != '' }}")).unwrap(), Condition::Secret);
-    for unknown in ["github.ref == 'refs/heads/main'", "hashFiles('x')", "steps.a.outputs.b", "(always()"] {
+    for unknown in ["github.ref == 'refs/heads/main'", "hashFiles('x')", "steps.a.outputs", "(always()"] {
         assert!(Condition::parse(Some(unknown)).is_err(), "{unknown}");
     }
 }

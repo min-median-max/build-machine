@@ -13,7 +13,7 @@ use crate::stream;
 use anyhow::{bail, Result};
 use build_machine_core::report::{Artifact, Outcome, PlatformResult, Stage, Step as ReportStep};
 use build_machine_core::request::WorkRequest;
-use build_machine_core::workflow::{stage_of, Adapter, Condition, Job, JobStatus, Step};
+use build_machine_core::workflow::{names_secret, stage_of, Adapter, Condition, Job, JobStatus, Step};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -45,12 +45,10 @@ fn step_environment(base: &[(String, String)], step: &Step) -> (Vec<(String, Str
     let mut limits = Vec::new();
     let merged: BTreeMap<&String, &String> = step.job_env.iter().chain(step.env.iter()).collect();
     for (key, value) in merged {
-        let replacement = if value.contains("secrets.") || value.contains("github.token") || key.contains("GITHUB_TOKEN")
-        {
+        // Every other expression was resolved before the step, and validation
+        // refused any that has no local value.
+        let replacement = if names_secret(value) || key.contains("GITHUB_TOKEN") {
             limits.push("GitHub secret values were replaced by an empty local adapter value.".to_owned());
-            String::new()
-        } else if value.contains("${{") {
-            limits.push(format!("Expression for {key} is not available in the local runner."));
             String::new()
         } else {
             value.to_string()
@@ -285,7 +283,7 @@ fn execute(
         }
         other => bail!("Unsupported workflow adapter: {}", other.as_str()),
     };
-    runner.finish_step(&files)?;
+    runner.finish_step(&files, step.id.as_deref())?;
     Ok(ran)
 }
 
@@ -314,7 +312,7 @@ fn run_job(
             ran.reason = Some("if condition depends on a secret, which is empty locally".to_owned());
             ran.skipped = true;
             ran
-        } else if !condition.runs(status) {
+        } else if !condition.runs(status, runner.outputs()) {
             let mut ran = Ran::new(Outcome::Skipped);
             ran.reason = Some(match status {
                 JobStatus::Success => "if condition evaluated false locally".to_owned(),
@@ -337,7 +335,12 @@ fn run_job(
                     (Some(limit), bound)
                 }
             };
-            let mut ran = match execute(step, limit, source, request, base, tools, &mut runner, result) {
+            // A step's expressions take the outputs of the steps before it,
+            // just before it runs.
+            let ran = step
+                .resolve(runner.outputs())
+                .and_then(|resolved| execute(&resolved, limit, source, request, base, tools, &mut runner, result));
+            let mut ran = match ran {
                 Ok(ran) => ran,
                 // An adapter that cannot do its work fails its step, and the
                 // report says why, rather than ending the replay without one.

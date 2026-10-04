@@ -1,24 +1,19 @@
-//! A step's `if:` read as GitHub reads it.
+//! `${{ }}` expressions, a step's `if:` and the templates of its other fields,
+//! read as GitHub reads them.
 //!
 //! Only what is knowable on this machine is accepted: the job status functions,
-//! boolean literals, `!`, `&&`, `||` and parentheses. A context such as
-//! `github.ref` or `steps.x.outputs.y` has no local value, so a condition that
-//! reads one fails validation instead of being guessed at.
+//! literals, `!`, `&&`, `||`, `==`, `!=`, parentheses and the outputs of earlier
+//! steps (`steps.<id>.outputs.<name>`). A step output has its value once that
+//! step has run, so validation checks the reference and the run supplies the
+//! value. Any other context — `github.ref`, `runner.temp`, `hashFiles()` — has
+//! no local value, so an expression that reads one fails validation instead of
+//! being guessed at.
 
 use anyhow::{bail, Result};
+use std::collections::BTreeMap;
 
-/// The boolean expression of a condition.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Expression {
-    Literal(bool),
-    Success,
-    Failure,
-    Always,
-    Cancelled,
-    Not(Box<Expression>),
-    And(Box<Expression>, Box<Expression>),
-    Or(Box<Expression>, Box<Expression>),
-}
+/// The outputs each step with an `id` wrote to `$GITHUB_OUTPUT`, by step id.
+pub type Outputs = BTreeMap<String, BTreeMap<String, String>>;
 
 /// Where a job stands when a step's condition is read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -31,10 +26,167 @@ pub enum JobStatus {
     Cancelled,
 }
 
+/// A step output an expression reads.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Reference {
+    pub step: String,
+    pub output: String,
+}
+
+/// An expression.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Expression {
+    Literal(Value),
+    Output(Reference),
+    Success,
+    Failure,
+    Always,
+    Cancelled,
+    Not(Box<Expression>),
+    And(Box<Expression>, Box<Expression>),
+    Or(Box<Expression>, Box<Expression>),
+    Equal(Box<Expression>, Box<Expression>),
+    NotEqual(Box<Expression>, Box<Expression>),
+}
+
+/// A value, with GitHub's types.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+}
+
+impl Value {
+    /// GitHub's falsy values are `false`, `0`, `''` and `null`.
+    fn truthy(&self) -> bool {
+        match self {
+            Value::Null => false,
+            Value::Bool(value) => *value,
+            Value::Number(value) => *value != 0.0 && !value.is_nan(),
+            Value::String(value) => !value.is_empty(),
+        }
+    }
+
+    fn number(&self) -> f64 {
+        match self {
+            Value::Null => 0.0,
+            Value::Bool(value) => f64::from(u8::from(*value)),
+            Value::Number(value) => *value,
+            Value::String(value) if value.trim().is_empty() => 0.0,
+            Value::String(value) => value.trim().parse().unwrap_or(f64::NAN),
+        }
+    }
+
+    /// GitHub compares strings without regard to case, and values of
+    /// different types as numbers.
+    fn equals(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::String(left), Value::String(right)) => left.to_lowercase() == right.to_lowercase(),
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(left), Value::Bool(right)) => left == right,
+            _ => self.number() == other.number(),
+        }
+    }
+
+    /// How a value appears when it is placed in text.
+    fn text(&self) -> String {
+        match self {
+            Value::Null => String::new(),
+            Value::Bool(value) => value.to_string(),
+            Value::Number(value) => value.to_string(),
+            Value::String(value) => value.clone(),
+        }
+    }
+}
+
+impl Expression {
+    fn uses_status(&self) -> bool {
+        match self {
+            Expression::Literal(_) | Expression::Output(_) => false,
+            Expression::Success | Expression::Failure | Expression::Always | Expression::Cancelled => true,
+            Expression::Not(inner) => inner.uses_status(),
+            Expression::And(left, right)
+            | Expression::Or(left, right)
+            | Expression::Equal(left, right)
+            | Expression::NotEqual(left, right) => left.uses_status() || right.uses_status(),
+        }
+    }
+
+    fn references(&self, found: &mut Vec<Reference>) {
+        match self {
+            Expression::Output(reference) => found.push(reference.clone()),
+            Expression::Not(inner) => inner.references(found),
+            Expression::And(left, right)
+            | Expression::Or(left, right)
+            | Expression::Equal(left, right)
+            | Expression::NotEqual(left, right) => {
+                left.references(found);
+                right.references(found);
+            }
+            _ => {}
+        }
+    }
+
+    /// `&&` and `||` yield an operand, as GitHub's do, so
+    /// `steps.a.outputs.v || 'none'` is a value and not a boolean.
+    fn evaluate(&self, status: JobStatus, outputs: &Outputs) -> Value {
+        match self {
+            Expression::Literal(value) => value.clone(),
+            Expression::Output(reference) => Value::String(
+                outputs
+                    .get(&reference.step)
+                    .and_then(|values| values.get(&reference.output))
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            Expression::Success => Value::Bool(status == JobStatus::Success),
+            Expression::Failure => Value::Bool(status == JobStatus::Failure),
+            Expression::Always => Value::Bool(true),
+            Expression::Cancelled => Value::Bool(status == JobStatus::Cancelled),
+            Expression::Not(inner) => Value::Bool(!inner.evaluate(status, outputs).truthy()),
+            Expression::And(left, right) => {
+                let left = left.evaluate(status, outputs);
+                if left.truthy() {
+                    right.evaluate(status, outputs)
+                } else {
+                    left
+                }
+            }
+            Expression::Or(left, right) => {
+                let left = left.evaluate(status, outputs);
+                if left.truthy() {
+                    left
+                } else {
+                    right.evaluate(status, outputs)
+                }
+            }
+            Expression::Equal(left, right) => {
+                Value::Bool(left.evaluate(status, outputs).equals(&right.evaluate(status, outputs)))
+            }
+            Expression::NotEqual(left, right) => {
+                Value::Bool(!left.evaluate(status, outputs).equals(&right.evaluate(status, outputs)))
+            }
+        }
+    }
+
+    /// Read one expression, the text inside `${{ }}`.
+    pub fn parse(text: &str) -> Result<Expression> {
+        let tokens = tokenize(text)?;
+        let mut parser = Parser { tokens: &tokens, position: 0 };
+        let expression = parser.or()?;
+        if parser.position != tokens.len() {
+            bail!("Unsupported workflow expression: {text}");
+        }
+        Ok(expression)
+    }
+}
+
 /// A parsed `if:` condition.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Condition {
-    /// Evaluated against the job's status, as GitHub does.
+    /// Evaluated against the job's status and the step outputs, as GitHub does.
     Expression { expression: Expression, uses_status: bool },
     /// The condition reads a secret or a signing switch, which never has a
     /// value here. It is false, and the replay records that as a limit.
@@ -54,26 +206,22 @@ impl Condition {
             Some(inner) => inner.trim(),
             None => text,
         };
-        let tokens = tokenize(inner)?;
-        let mut parser = Parser { tokens: &tokens, position: 0 };
-        let expression = parser.or()?;
-        if parser.position != tokens.len() {
-            bail!("Unsupported workflow condition: {text}");
-        }
+        let expression = Expression::parse(inner)?;
         let uses_status = expression.uses_status();
         Ok(Condition::Expression { expression, uses_status })
     }
 
-    /// Whether the step runs, given where its job stands.
+    /// Whether the step runs, given where its job stands and what earlier
+    /// steps wrote.
     ///
     /// A condition without a status function is implicitly `success() && (…)`,
     /// so a step after a failure or a cancellation runs only when its
     /// condition says so.
-    pub fn runs(&self, status: JobStatus) -> bool {
+    pub fn runs(&self, status: JobStatus, outputs: &Outputs) -> bool {
         match self {
             Condition::Secret => false,
             Condition::Expression { expression, uses_status } => {
-                let value = expression.evaluate(status);
+                let value = expression.evaluate(status, outputs).truthy();
                 if *uses_status {
                     value
                 } else {
@@ -82,40 +230,86 @@ impl Condition {
             }
         }
     }
-}
 
-impl Expression {
-    fn uses_status(&self) -> bool {
-        match self {
-            Expression::Literal(_) => false,
-            Expression::Success | Expression::Failure | Expression::Always | Expression::Cancelled => true,
-            Expression::Not(inner) => inner.uses_status(),
-            Expression::And(left, right) | Expression::Or(left, right) => left.uses_status() || right.uses_status(),
+    /// The step outputs the condition reads.
+    pub fn references(&self) -> Vec<Reference> {
+        let mut found = Vec::new();
+        if let Condition::Expression { expression, .. } = self {
+            expression.references(&mut found);
         }
-    }
-
-    /// A step that exceeds its own `timeout-minutes` fails; a job that
-    /// exceeds its limit is cancelled.
-    fn evaluate(&self, status: JobStatus) -> bool {
-        match self {
-            Expression::Literal(value) => *value,
-            Expression::Success => status == JobStatus::Success,
-            Expression::Failure => status == JobStatus::Failure,
-            Expression::Always => true,
-            Expression::Cancelled => status == JobStatus::Cancelled,
-            Expression::Not(inner) => !inner.evaluate(status),
-            Expression::And(left, right) => left.evaluate(status) && right.evaluate(status),
-            Expression::Or(left, right) => left.evaluate(status) || right.evaluate(status),
-        }
+        found
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Text with `${{ }}` expressions in it: a `run:` block, an `env` or `with`
+/// value, a `working-directory`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Template {
+    parts: Vec<Part>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Part {
+    Text(String),
+    Expression(Expression),
+}
+
+impl Template {
+    pub fn parse(text: &str) -> Result<Template> {
+        let mut parts = Vec::new();
+        let mut rest = text;
+        while let Some(start) = rest.find("${{") {
+            if start > 0 {
+                parts.push(Part::Text(rest[..start].to_owned()));
+            }
+            let after = &rest[start + 3..];
+            let Some(end) = after.find("}}") else {
+                bail!("Unterminated workflow expression: {text}");
+            };
+            let expression = Expression::parse(after[..end].trim())?;
+            if expression.uses_status() {
+                bail!("A status function is only available in if: {text}");
+            }
+            parts.push(Part::Expression(expression));
+            rest = &after[end + 2..];
+        }
+        if !rest.is_empty() {
+            parts.push(Part::Text(rest.to_owned()));
+        }
+        Ok(Template { parts })
+    }
+
+    pub fn render(&self, outputs: &Outputs) -> String {
+        self.parts
+            .iter()
+            .map(|part| match part {
+                Part::Text(text) => text.clone(),
+                Part::Expression(expression) => expression.evaluate(JobStatus::Success, outputs).text(),
+            })
+            .collect()
+    }
+
+    pub fn references(&self) -> Vec<Reference> {
+        let mut found = Vec::new();
+        for part in &self.parts {
+            if let Part::Expression(expression) = part {
+                expression.references(&mut found);
+            }
+        }
+        found
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 enum Token {
     Word(String),
+    Text(String),
+    Number(f64),
     Not,
     And,
     Or,
+    Equal,
+    NotEqual,
     Open,
     Close,
 }
@@ -124,19 +318,28 @@ fn tokenize(text: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let characters: Vec<char> = text.chars().collect();
     let mut index = 0;
+    let pair = |index: usize, second: char| characters.get(index + 1) == Some(&second);
     while index < characters.len() {
         let character = characters[index];
         match character {
             ' ' | '\t' | '\n' | '\r' => index += 1,
-            '!' if characters.get(index + 1) != Some(&'=') => {
+            '!' if pair(index, '=') => {
+                tokens.push(Token::NotEqual);
+                index += 2;
+            }
+            '!' => {
                 tokens.push(Token::Not);
                 index += 1;
             }
-            '&' if characters.get(index + 1) == Some(&'&') => {
+            '=' if pair(index, '=') => {
+                tokens.push(Token::Equal);
+                index += 2;
+            }
+            '&' if pair(index, '&') => {
                 tokens.push(Token::And);
                 index += 2;
             }
-            '|' if characters.get(index + 1) == Some(&'|') => {
+            '|' if pair(index, '|') => {
                 tokens.push(Token::Or);
                 index += 2;
             }
@@ -148,22 +351,48 @@ fn tokenize(text: &str) -> Result<Vec<Token>> {
                 tokens.push(Token::Close);
                 index += 1;
             }
-            value if value.is_ascii_alphanumeric() || value == '_' || value == '\'' => {
-                let start = index;
-                if value == '\'' {
-                    index += 1;
-                    while index < characters.len() && characters[index] != '\'' {
-                        index += 1;
-                    }
-                    index += 1;
-                } else {
-                    while index < characters.len() && (characters[index].is_ascii_alphanumeric() || characters[index] == '_') {
-                        index += 1;
+            '\'' => {
+                // A quote inside a string is written twice.
+                let mut value = String::new();
+                index += 1;
+                loop {
+                    match characters.get(index) {
+                        None => bail!("Unterminated string in workflow expression: {text}"),
+                        Some('\'') if characters.get(index + 1) == Some(&'\'') => {
+                            value.push('\'');
+                            index += 2;
+                        }
+                        Some('\'') => {
+                            index += 1;
+                            break;
+                        }
+                        Some(other) => {
+                            value.push(*other);
+                            index += 1;
+                        }
                     }
                 }
-                tokens.push(Token::Word(characters[start..index.min(characters.len())].iter().collect()));
+                tokens.push(Token::Text(value));
             }
-            _ => bail!("Unsupported workflow condition: {text}"),
+            value if value.is_ascii_digit() => {
+                let start = index;
+                while index < characters.len() && (characters[index].is_ascii_digit() || characters[index] == '.') {
+                    index += 1;
+                }
+                let number: String = characters[start..index].iter().collect();
+                let Ok(number) = number.parse() else { bail!("Unsupported number in workflow expression: {text}") };
+                tokens.push(Token::Number(number));
+            }
+            value if value.is_ascii_alphabetic() || value == '_' => {
+                let start = index;
+                while index < characters.len()
+                    && (characters[index].is_ascii_alphanumeric() || matches!(characters[index], '_' | '-' | '.'))
+                {
+                    index += 1;
+                }
+                tokens.push(Token::Word(characters[start..index].iter().collect()));
+            }
+            _ => bail!("Unsupported workflow expression: {text}"),
         }
     }
     Ok(tokens)
@@ -189,16 +418,33 @@ impl Parser<'_> {
     }
 
     fn and(&mut self) -> Result<Expression> {
-        let mut left = self.unary()?;
+        let mut left = self.comparison()?;
         while self.peek() == Some(&Token::And) {
             self.position += 1;
-            left = Expression::And(Box::new(left), Box::new(self.unary()?));
+            left = Expression::And(Box::new(left), Box::new(self.comparison()?));
         }
         Ok(left)
     }
 
+    fn comparison(&mut self) -> Result<Expression> {
+        let mut left = self.unary()?;
+        loop {
+            match self.peek() {
+                Some(Token::Equal) => {
+                    self.position += 1;
+                    left = Expression::Equal(Box::new(left), Box::new(self.unary()?));
+                }
+                Some(Token::NotEqual) => {
+                    self.position += 1;
+                    left = Expression::NotEqual(Box::new(left), Box::new(self.unary()?));
+                }
+                _ => return Ok(left),
+            }
+        }
+    }
+
     fn unary(&mut self) -> Result<Expression> {
-        match self.peek() {
+        match self.peek().cloned() {
             Some(Token::Not) => {
                 self.position += 1;
                 Ok(Expression::Not(Box::new(self.unary()?)))
@@ -207,16 +453,22 @@ impl Parser<'_> {
                 self.position += 1;
                 let inner = self.or()?;
                 if self.peek() != Some(&Token::Close) {
-                    bail!("Unsupported workflow condition: unbalanced parentheses");
+                    bail!("Unsupported workflow expression: unbalanced parentheses");
                 }
                 self.position += 1;
                 Ok(inner)
             }
-            Some(Token::Word(word)) => {
-                let word = word.clone();
+            Some(Token::Text(value)) => {
                 self.position += 1;
-                let call = self.peek() == Some(&Token::Open)
-                    && self.tokens.get(self.position + 1) == Some(&Token::Close);
+                Ok(Expression::Literal(Value::String(value)))
+            }
+            Some(Token::Number(value)) => {
+                self.position += 1;
+                Ok(Expression::Literal(Value::Number(value)))
+            }
+            Some(Token::Word(word)) => {
+                self.position += 1;
+                let call = self.peek() == Some(&Token::Open) && self.tokens.get(self.position + 1) == Some(&Token::Close);
                 if call {
                     self.position += 2;
                     return Ok(match word.as_str() {
@@ -224,16 +476,33 @@ impl Parser<'_> {
                         "failure" => Expression::Failure,
                         "always" => Expression::Always,
                         "cancelled" => Expression::Cancelled,
-                        other => bail!("Unsupported workflow condition function: {other}()"),
+                        other => bail!("Unsupported workflow expression function: {other}()"),
                     });
                 }
+                if self.peek() == Some(&Token::Open) {
+                    bail!("Unsupported workflow expression function: {word}()");
+                }
                 Ok(match word.as_str() {
-                    "true" | "'true'" | "1" => Expression::Literal(true),
-                    "false" | "'false'" | "0" => Expression::Literal(false),
-                    other => bail!("Unsupported workflow condition value: {other}"),
+                    "true" => Expression::Literal(Value::Bool(true)),
+                    "false" => Expression::Literal(Value::Bool(false)),
+                    "null" => Expression::Literal(Value::Null),
+                    path => Expression::Output(step_output(path)?),
                 })
             }
-            _ => bail!("Unsupported workflow condition: missing operand"),
+            _ => bail!("Unsupported workflow expression: missing operand"),
         }
+    }
+}
+
+/// `steps.<id>.outputs.<name>` is the one context with a local value.
+fn step_output(path: &str) -> Result<Reference> {
+    let parts: Vec<&str> = path.split('.').collect();
+    match parts.as_slice() {
+        ["steps", step, "outputs", output] if !step.is_empty() && !output.is_empty() => {
+            Ok(Reference { step: (*step).to_owned(), output: (*output).to_owned() })
+        }
+        _ => bail!(
+            "Unsupported workflow context: {path}. Only steps.<id>.outputs.<name> has a value in a local replay."
+        ),
     }
 }
