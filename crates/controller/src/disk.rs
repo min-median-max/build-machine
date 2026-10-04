@@ -88,6 +88,42 @@ pub fn disk_tool(prlctl: &Path) -> std::path::PathBuf {
     prlctl.with_file_name("prl_disk_tool")
 }
 
+/// The memory a `prlctl list -i` description gives the VM, in MB.
+pub fn memory_mb(info: &str) -> Option<u64> {
+    info.lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("memory size="))
+        .and_then(|rest| rest.split(|character: char| !character.is_ascii_digit()).next())
+        .and_then(|digits| digits.parse().ok())
+}
+
+/// The bytes `df -k <path>` reports available.
+pub fn available_bytes(df: &str) -> Option<u64> {
+    let line = df.lines().nth(1)?;
+    line.split_whitespace().nth(3)?.parse::<u64>().ok().map(|kib| kib * 1024)
+}
+
+/// Room to start a VM again: Parallels refuses to start one without free host
+/// space for its memory. Its memory plus 1024 MB is required; the bytes needed
+/// are returned, or why there is not enough.
+pub fn start_room(available: u64, memory_mb: u64) -> std::result::Result<u64, String> {
+    let need = (memory_mb + 1024) * 1024 * 1024;
+    if available >= need {
+        Ok(need)
+    } else {
+        Err(format!(
+            "the Mac has {available} bytes free and starting the VM again needs {need} bytes (its {memory_mb} MB of memory and 1024 MB)"
+        ))
+    }
+}
+
+/// What the offline compaction did.
+pub enum Offline {
+    Compacted(Vec<build_machine_core::report::DiskCompaction>),
+    /// The VM was not stopped, for this reason; it keeps running.
+    Skipped(String),
+}
+
 /// Compact a VM's disks with the VM stopped, after its guest discarded its
 /// free blocks, and start it again.
 ///
@@ -100,7 +136,7 @@ pub fn compact_offline(
     prlctl: &Path,
     vm: &str,
     log: &crate::oplog::OperationLog,
-) -> Result<Vec<build_machine_core::report::DiskCompaction>> {
+) -> Result<Offline> {
     let run = |program: &Path, arguments: &[&str]| -> Result<()> {
         log.command(&format!("{} {}", program.display(), arguments.join(" ")));
         let output = Command::new(program).args(arguments).output().with_context(|| format!("{}을 실행하지 못했어요.", program.display()))?;
@@ -112,12 +148,25 @@ pub fn compact_offline(
         Ok(())
     };
     let info = Command::new(prlctl).args(["list", "-i", vm]).output().context("Parallels prlctl을 실행하지 못했어요.")?;
-    let images = disk_images(&String::from_utf8_lossy(&info.stdout));
+    let description = String::from_utf8_lossy(&info.stdout).into_owned();
+    let images = disk_images(&description);
     let before: Vec<Allocation> = images.iter().map(|image| allocation(image)).collect::<Result<_>>()?;
+    // Never stop a VM that cannot be started again.
+    let memory = memory_mb(&description).context("prlctl list -i에 VM 메모리 크기가 없어요.")?;
+    let place = images.first().and_then(|image| image.parent()).context("VM 디스크 이미지가 없어요.")?;
+    let df = Command::new("df").arg("-k").arg(place).output().context("df를 실행하지 못했어요.")?;
+    let available = available_bytes(&String::from_utf8_lossy(&df.stdout)).context("df의 여유 공간을 읽지 못했어요.")?;
+    match start_room(available, memory) {
+        Ok(need) => log.note(&format!("DISK {vm}: {available} bytes free, {need} needed to start again; stopping for compaction")),
+        Err(reason) => {
+            log.note(&format!("DISK {vm}: offline compaction skipped, the VM keeps running: {reason}"));
+            return Ok(Offline::Skipped(reason));
+        }
+    }
     run(prlctl, &["stop", vm])?;
     let compacted: Result<()> = images.iter().try_for_each(|image| run(&disk_tool(prlctl), &["compact", "--hdd", &image.to_string_lossy()]));
     // The VM is started again whatever the compaction did.
-    run(prlctl, &["start", vm])?;
+    run(prlctl, &["start", vm]).context("THE VM IS STOPPED: it was stopped for disk compaction and did not start again")?;
     compacted?;
     let mut results = Vec::new();
     for (image, before) in images.iter().zip(before) {
@@ -138,7 +187,7 @@ pub fn compact_offline(
             apparent_after: after.apparent_bytes,
         });
     }
-    Ok(results)
+    Ok(Offline::Compacted(results))
 }
 
 /// How long a started VM may take until its guest runs a command.

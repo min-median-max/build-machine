@@ -24,7 +24,7 @@ Parallels 디스크(`type='expanded'`)는 게스트가 쓰는 만큼 커지고, 
 
 게스트 TRIM 뒤의 online compaction은 믿을 수 없습니다. 2026-10-04에 측정한 세 번의 trim(4 GiB, 8.8 GiB, 8.9 GiB) 중 한 번만 30초 안에 공간을 돌려줬고, 두 번은 10분, 15분 동안 이미지가 그대로였습니다. 게스트가 trim한 뒤 VM을 멈추고 압축하면 돌려줍니다. `prlctl stop` 뒤 `prl_disk_tool compact --hdd "<vm>.pvm/harddisk1.hdd"`가 7초 걸렸고 이미지가 35,398,656 KiB에서 27,033,600 KiB로, 겉보기 크기가 36.2 GB에서 27.7 GB로 줄었습니다.
 
-그래서 Linux의 setup, build, release, 재현이 끝나면 결과와 상관없이 컨트롤러가 게스트의 `reclaim`을 실행하고, VM을 멈추고, 디스크마다 `prl_disk_tool compact --hdd`를 실행하고, VM을 시작하고, 게스트가 명령을 실행할 때까지 기다린 뒤(시도마다 로그, 최대 300초), 다음 작업처럼 `setup-system`과 `doctor`를 실행합니다. 모든 프런트엔드가 작업 전체에 걸쳐 잡는 machine lock을 그동안 계속 쥡니다. 플랫폼 결과의 `disk`에 이미지마다 전후의 할당 bytes와 겉보기 bytes를 기록하고, 다시 준비되지 않은 VM은 그 원인으로 플랫폼을 실패시킵니다.
+그래서 Linux의 setup, build, release, 재현이 끝나면 결과와 상관없이 컨트롤러가 게스트의 `reclaim`을 실행하고, VM을 멈추고, 디스크마다 `prl_disk_tool compact --hdd`를 실행하고, VM을 시작하고, 게스트가 명령을 실행할 때까지 기다린 뒤(시도마다 로그, 최대 300초), 다음 작업처럼 `setup-system`과 `doctor`를 실행합니다. Parallels는 여유 공간이 없으면 VM 시작을 거부하므로, 디스크가 있는 볼륨에 VM 메모리에 1024 MB를 더한 여유 공간이 있을 때만 VM을 멈추고, 그렇지 않으면 계속 실행하며 이유를 기록합니다. 모든 프런트엔드가 작업 전체에 걸쳐 잡는 machine lock을 그동안 계속 쥡니다. 플랫폼 결과의 `disk`에 이미지마다 전후의 할당 bytes와 겉보기 bytes를 기록하고, 다시 준비되지 않은 VM은 그 원인으로 플랫폼을 실패시킵니다.
 
 ## 현재 구현 상태
 

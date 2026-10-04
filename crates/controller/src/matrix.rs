@@ -247,8 +247,12 @@ fn execute_platform(
     let Some(vm) = vm else { return result };
     // The space the work freed goes back to the Mac whatever the work's result.
     match (result, give_back_space(transport.as_ref(), &vm, log)) {
-        (Ok(mut result), Ok(disk)) => {
+        (Ok(mut result), Ok(crate::disk::Offline::Compacted(disk))) => {
             result.disk = disk;
+            Ok(result)
+        }
+        (Ok(mut result), Ok(crate::disk::Offline::Skipped(reason))) => {
+            result.limits.push(format!("The VM's disks were not compacted offline: {reason}. Only the guest's free blocks were discarded."));
             Ok(result)
         }
         (Ok(mut result), Err(error)) => {
@@ -272,10 +276,13 @@ fn give_back_space(
     transport: &dyn Transport,
     vm: &str,
     log: &OperationLog,
-) -> Result<Vec<build_machine_core::report::DiskCompaction>> {
+) -> Result<crate::disk::Offline> {
     transport.invoke_elevated(&["reclaim".to_owned()], log).context("the guest did not discard its free blocks")?;
     let prlctl = crate::transport::prlctl_path()?;
     let disk = crate::disk::compact_offline(&prlctl, vm, log)?;
+    if matches!(disk, crate::disk::Offline::Skipped(_)) {
+        return Ok(disk);
+    }
     crate::disk::wait_for_guest(&prlctl, vm, log)?;
     transport.invoke_elevated(&["setup-system".to_owned()], log).context("setup-system after the VM restarted")?;
     transport.invoke(&["doctor".to_owned()], log).context("doctor after the VM restarted")?;

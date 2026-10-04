@@ -41,3 +41,21 @@ fn an_image_is_measured_by_its_allocated_blocks() {
     assert_eq!(measured.apparent_bytes, 64 << 20);
     assert!(measured.allocated_bytes >= 1 << 20 && measured.allocated_bytes < 8 << 20, "{measured:?}");
 }
+
+/// The VM is stopped for offline compaction only when it can be started
+/// again. Parallels refuses to start a VM without free host space for its
+/// memory ("There's not enough disk space available to start … Free at least
+/// 8175 MB", replay 4 of orm, a 16384 MB VM with 7 GB free), which left the
+/// machine stopped.
+#[test]
+fn the_vm_is_stopped_only_with_room_to_start_it_again() {
+    use build_machine_controller::disk::{available_bytes, memory_mb, start_room};
+    let info = "  cpu cpus=4 auto=off\n  memory size=16384Mb auto=off\n  hdd0 (+) sata:0 image='/x.hdd'\n";
+    assert_eq!(memory_mb(info), Some(16384));
+    let df = "Filesystem 1024-blocks      Used Available Capacity iused ifree %iused  Mounted on\n/dev/disk3s1 482797652 431956820 7340032 99% 3190789 79328680 4% /System/Volumes/Data\n";
+    assert_eq!(available_bytes(df), Some(7340032 * 1024));
+    let need = (16384 + 1024) * 1024 * 1024;
+    let refused = start_room(7 * 1024 * 1024 * 1024, 16384).unwrap_err();
+    assert!(refused.contains(&need.to_string()) && refused.contains("16384"), "{refused}");
+    assert_eq!(start_room(need, 16384), Ok(need));
+}
