@@ -9,6 +9,16 @@ The desktop GUI, Windows Node.js 22.23.2 preparation, persistent environment res
 > edited to describe the Rust implementation, which would make it false. What the
 > Rust rewrite has and has not been shown to do is directly below.
 
+## Own checkout into a path — 2026-10-04
+
+Platform: macOS 26.6.2 arm64 (no VM and no `ci run`).
+
+- Red, against B2 (`d51f7ff`): `cargo test -p build-machine-core --locked --test workflow` failed 1 of 27: `the_own_repository_is_checked_out_into_a_path` with `called Result::unwrap() on an Err value: job test의 step 3 (actions/checkout@v4): checkout의 path는 repository와 함께 다른 저장소를 checkout할 때만 지원해요.` `cargo test -p build-machine-worker --locked --test checkout` failed 1 of 11: `the_own_repository_is_checked_out_into_a_path` with `called Result::unwrap() on an Err value: No such file or directory (os error 2)`, because the checkout required an existing directory.
+- `checkout_inputs_are_read_or_refused` (crates/core/tests/job.rs) listed `path: src` as refused; it now accepts `path: src` and refuses `path: ../src`, as this change defines. `ref_and_path_without_a_repository_fail_validation` became `a_ref_without_a_repository_fails_validation`.
+- Steps without `working-directory` already run in the workspace root: the worker passes `GITHUB_WORKSPACE` as the step directory, whatever `path` a checkout used.
+- Green: core workflow 27/27, worker checkout 11/11. `cargo test --workspace --locked` passed 121 tests; `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `ci validate` of core `.github/workflows/ci.yml` (`f9929097c3e72250498e3700b86b233c02ead99e`, dirty) and the registry `.github/workflows/ci.yml` (`261104c4370f3e7fdb14eedb8b9b30077aa5e9e1`, dirty), `--event push --os macos`, both returned `"status": "valid"`. core: stages build 1, setup 10, smoke 1, test 3, repositories plugin-browser, plugin-files, plugin-terminal, sidecar-files and sidecar-vt. registry: build 1, setup 5, smoke 1, test 1, repositories plugin-browser, plugin-files and plugin-terminal.
+
 ## The github context — 2026-10-04
 
 Platform: macOS 26.6.2 arm64 (no VM and no `ci run`).

@@ -216,3 +216,38 @@ fn another_repository_is_not_checked_out_over_files() {
     let error = other(&fixture, Some("v0.1.0"), 1, "occupied").unwrap_err();
     assert!(format!("{error:#}").contains("비어 있지 않아요"), "{error:#}");
 }
+
+/// The job's own repository goes into `path` under the workspace, which does
+/// not exist yet, with the replay's uncommitted changes staged on it.
+#[test]
+fn the_own_repository_is_checked_out_into_a_path() {
+    let fixture = fixture();
+    std::fs::write(fixture.project.join("value.txt"), "edited").unwrap();
+    let archive = fixture.base.join("path.zip");
+    let history = fixture.base.join("path.bundle");
+    let (revision, dirty, _hash, _count, _mode) = source::make_archive(&fixture.project, &archive, None).unwrap();
+    let recorded = source::make_history(&fixture.project, None, &history).unwrap();
+    let workspace = fixture.base.join("path").join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let directory = workspace.join("core");
+    checkout(
+        &Checkout {
+            history: &history,
+            mirror: &fixture.base.join("path-mirror.git"),
+            workspace: &directory,
+            archive: &archive,
+            revision: &revision,
+            reference: recorded.reference.as_deref(),
+            dirty,
+            fetch_depth: 1,
+            fetch_tags: false,
+        },
+        &[("PATH".to_owned(), std::env::var("PATH").unwrap())],
+    )
+    .unwrap();
+    assert_eq!(git(&directory, &["rev-parse", "HEAD"]), revision);
+    assert_eq!(git(&directory, &["symbolic-ref", "HEAD"]), "refs/heads/main");
+    assert_eq!(std::fs::read_to_string(directory.join("value.txt")).unwrap(), "edited");
+    assert!(git(&directory, &["status", "--porcelain"]).contains("M  value.txt"));
+    assert_eq!(std::fs::read_dir(&workspace).unwrap().count(), 1);
+}

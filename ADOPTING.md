@@ -140,9 +140,14 @@ sent as a Git bundle and fetched through a local mirror that is `origin`; it
 is not the GitHub remote, which is recorded as a limit. A replay of the
 working tree carries its uncommitted edits, deletions and untracked files
 staged on the replayed commit, so `git ls-files` and `git grep` see them and
-`git log` sees only real commits; that is recorded as a limit too. `ref`,
-`repository`, `path`, `submodules` and the other inputs that would check out
-something else fail validation. When a job ends, processes that still carry
+`git log` sees only real commits; that is recorded as a limit too. `path`
+places the checkout in a relative directory under the workspace, which must be
+empty or absent; steps without `working-directory` still run in the workspace
+root. `repository` checks out another repository that `machine.json`
+`repositories` maps to a local clone, at its `ref` (a branch, a tag or a commit
+SHA, the clone's `HEAD` when absent), from that clone's committed history.
+`ref` without `repository`, `submodules` and the other inputs that would check
+out something else fail validation. When a job ends, processes that still carry
 its `RUNNER_TRACKING_ID` are terminated, as a runner does (Linux).
 
 **Jobs** — a job may use `name`, `runs-on`, `needs`, `env`, `steps` and

@@ -43,7 +43,12 @@
     "days": 30
   },
   "repositories": {
-    "soksak-app/core": "/Users/maxkwon/Projects/soksak/core"
+    "soksak-app/core": "/Users/maxkwon/Projects/soksak/core",
+    "soksak-app/plugin-browser": "/Users/maxkwon/Projects/soksak/plugins/browser",
+    "soksak-app/plugin-files": "/Users/maxkwon/Projects/soksak/plugins/files",
+    "soksak-app/plugin-terminal": "/Users/maxkwon/Projects/soksak/plugins/terminal",
+    "soksak-app/sidecar-files": "/Users/maxkwon/Projects/soksak/sidecars/files",
+    "soksak-app/sidecar-vt": "/Users/maxkwon/Projects/soksak/sidecars/vt"
   },
   "platforms": {
     "windows": {

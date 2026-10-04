@@ -231,29 +231,35 @@ fn is_repository_name(name: &str) -> bool {
     matches!(name.split_once('/'), Some((owner, rest)) if part(owner) && part(rest) && !matches!(rest, "." | ".."))
 }
 
-/// `actions/checkout`'s `repository`, `ref` and `path`. Without `repository`
-/// the step checks out the replayed revision into the workspace, so `ref` and
-/// `path` are refused there rather than ignored.
+/// `actions/checkout`'s `path`: where under `GITHUB_WORKSPACE` the step checks
+/// out, for the job's own repository and for another. `None` is the workspace
+/// itself.
+pub fn checkout_path(with: &BTreeMap<String, String>) -> Result<Option<String>> {
+    let Some(path) = with.get("path").map(|value| value.trim().to_owned()) else { return Ok(None) };
+    // Read the same on every worker: either separator, no drive, no root.
+    let inside = !path.contains("${{")
+        && !path.contains(':')
+        && !path.starts_with(['/', '\\'])
+        && path.split(['/', '\\']).all(|part| part != "..");
+    if !inside {
+        bail!("checkout의 path는 GITHUB_WORKSPACE 안의 상대 경로여야 해요: {path}");
+    }
+    Ok(Some(path))
+}
+
+/// `actions/checkout`'s `repository` and `ref`, with its `path`. Without
+/// `repository` the step checks out the replayed revision, so `ref` is
+/// refused there rather than ignored.
 pub fn checkout_target(with: &BTreeMap<String, String>) -> Result<Option<CheckoutTarget>> {
+    let path = checkout_path(with)?;
     let Some(repository) = with.get("repository").map(|value| value.trim()) else {
-        if let Some(input) = ["ref", "path"].into_iter().find(|input| with.contains_key(*input)) {
-            bail!("checkout의 {input}는 repository와 함께 다른 저장소를 checkout할 때만 지원해요.");
+        if with.contains_key("ref") {
+            bail!("checkout의 ref는 repository와 함께 다른 저장소를 checkout할 때만 지원해요.");
         }
         return Ok(None);
     };
     if !is_repository_name(repository) {
         bail!("checkout의 repository는 owner/name 형식이어야 해요: {repository}");
-    }
-    let path = with.get("path").map(|value| value.trim().to_owned());
-    if let Some(path) = &path {
-        // Read the same on every worker: either separator, no drive, no root.
-        let inside = !path.contains("${{")
-            && !path.contains(':')
-            && !path.starts_with(['/', '\\'])
-            && path.split(['/', '\\']).all(|part| part != "..");
-        if !inside {
-            bail!("checkout의 path는 GITHUB_WORKSPACE 안의 상대 경로여야 해요: {path}");
-        }
     }
     Ok(Some(CheckoutTarget {
         repository: repository.to_owned(),

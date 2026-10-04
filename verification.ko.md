@@ -8,6 +8,16 @@
 > 그 실행들의 기록으로 남겨 두며, Rust 구현을 설명하도록 고쳐 쓰지 않습니다. 그렇게 하면
 > 기록이 거짓이 됩니다. Rust 재작성이 무엇을 보였고 무엇을 보이지 않았는지는 바로 아래에 있습니다.
 
+## 자신의 저장소를 path에 checkout — 2026-10-04
+
+플랫폼: macOS 26.6.2 arm64 (VM과 `ci run`은 실행하지 않음).
+
+- Red, B2(`d51f7ff`)에서: `cargo test -p build-machine-core --locked --test workflow`가 27건 중 1건 실패했습니다: `the_own_repository_is_checked_out_into_a_path`가 `called Result::unwrap() on an Err value: job test의 step 3 (actions/checkout@v4): checkout의 path는 repository와 함께 다른 저장소를 checkout할 때만 지원해요.`로 실패했습니다. `cargo test -p build-machine-worker --locked --test checkout`는 11건 중 1건, `the_own_repository_is_checked_out_into_a_path`가 checkout이 이미 있는 폴더를 요구해서 `called Result::unwrap() on an Err value: No such file or directory (os error 2)`로 실패했습니다.
+- `checkout_inputs_are_read_or_refused`(crates/core/tests/job.rs)는 `path: src`를 거부 대상으로 두었습니다. 이 변경의 정의대로 이제 `path: src`를 받고 `path: ../src`를 거부합니다. `ref_and_path_without_a_repository_fail_validation`은 `a_ref_without_a_repository_fails_validation`이 되었습니다.
+- `working-directory`가 없는 단계는 이미 workspace 루트에서 실행합니다: worker는 checkout이 어떤 `path`를 썼든 `GITHUB_WORKSPACE`를 단계 폴더로 넘깁니다.
+- Green: core workflow 27/27, worker checkout 11/11. `cargo test --workspace --locked`가 121건을 통과했고 `cargo clippy --workspace --all-targets --locked -- -D warnings`가 통과했습니다.
+- core `.github/workflows/ci.yml`(`f9929097c3e72250498e3700b86b233c02ead99e`, dirty)과 registry `.github/workflows/ci.yml`(`261104c4370f3e7fdb14eedb8b9b30077aa5e9e1`, dirty)의 `ci validate`(`--event push --os macos`)는 모두 `"status": "valid"`를 반환했습니다. core: stage build 1, setup 10, smoke 1, test 3, repositories plugin-browser, plugin-files, plugin-terminal, sidecar-files, sidecar-vt. registry: build 1, setup 5, smoke 1, test 1, repositories plugin-browser, plugin-files, plugin-terminal.
+
 ## github context — 2026-10-04
 
 플랫폼: macOS 26.6.2 arm64 (VM과 `ci run`은 실행하지 않음).

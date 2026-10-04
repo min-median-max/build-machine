@@ -26,7 +26,7 @@ pub struct Checkout<'a> {
     pub history: &'a Path,
     /// A bare repository holding that history, kept between replays.
     pub mirror: &'a Path,
-    /// `GITHUB_WORKSPACE`, empty.
+    /// `GITHUB_WORKSPACE`, or the step's `path` under it: empty or absent.
     pub workspace: &'a Path,
     /// The source archive: the files of the replay.
     pub archive: &'a Path,
@@ -144,9 +144,10 @@ fn fetch_and_check_out(
 pub fn checkout(checkout: &Checkout, environment: &[(String, String)]) -> Result<String> {
     let Checkout { history, mirror, workspace, archive, revision, reference, dirty, fetch_depth, fetch_tags } =
         *checkout;
-    if std::fs::read_dir(workspace)?.next().is_some() {
-        bail!("GITHUB_WORKSPACE가 비어 있지 않아요: {}", workspace.display());
+    if workspace.exists() && std::fs::read_dir(workspace)?.next().is_some() {
+        bail!("checkout할 폴더가 비어 있지 않아요: {}", workspace.display());
     }
+    std::fs::create_dir_all(workspace)?;
     update_mirror(history, mirror, environment)?;
     fetch_and_check_out(workspace, mirror, revision, reference, fetch_depth, fetch_tags, environment)?;
 

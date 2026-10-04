@@ -128,7 +128,11 @@ branch와 tag이며, 재현하는 branch나 tag를 checkout합니다(commit은 d
 mirror를 거쳐 가져옵니다. GitHub remote가 아니라는 점은 제한으로 기록합니다. 작업 트리를
 재현하면 커밋하지 않은 수정·삭제·추적하지 않는 파일을 재현하는 commit 위에 stage해 두므로
 `git ls-files`와 `git grep`은 그것을 보고 `git log`는 실제 commit만 봅니다. 이것도
-제한으로 기록합니다. `ref`, `repository`, `path`, `submodules`처럼 다른 것을
+제한으로 기록합니다. `path`는 workspace 아래의 상대 폴더에 checkout하며, 그 폴더는
+비어 있거나 없어야 합니다. `working-directory`가 없는 단계는 그대로 workspace 루트에서
+실행합니다. `repository`는 `machine.json`의 `repositories`가 로컬 clone에 대응시킨 다른
+저장소를 그 clone의 commit된 기록에서 `ref`(branch, tag 또는 commit SHA, 없으면 clone의
+`HEAD`)로 checkout합니다. `repository` 없는 `ref`, `submodules`처럼 다른 것을
 checkout하게 하는 입력은 검증에서 실패합니다. job이 끝나면 runner처럼 그 job의
 `RUNNER_TRACKING_ID`를 가진 프로세스를 종료합니다(Linux).
 

@@ -110,7 +110,8 @@ fn a_job_cannot_need_a_job_of_another_platform() {
     assert!(format!("{error:#}").contains("needs"), "{error:#}");
 }
 
-/// `actions/checkout` reads `fetch-depth` and `fetch-tags`; an input that
+/// `actions/checkout` reads `fetch-depth`, `fetch-tags` and a `path` inside
+/// the workspace; an input that
 /// would check out something else fails validation instead of being ignored.
 #[test]
 fn checkout_inputs_are_read_or_refused() {
@@ -121,7 +122,8 @@ fn checkout_inputs_are_read_or_refused() {
     };
     checkout("fetch-depth: 0").unwrap();
     checkout("fetch-tags: true").unwrap();
-    for refused in ["ref: main", "path: src", "submodules: true", "fetch-depth: all", "fetch-tags: yes"] {
+    checkout("path: src").unwrap();
+    for refused in ["ref: main", "path: ../src", "submodules: true", "fetch-depth: all", "fetch-tags: yes"] {
         let error = checkout(refused).unwrap_err();
         let name = refused.split(':').next().unwrap();
         assert!(format!("{error:#}").contains(name), "{refused}: {error:#}");

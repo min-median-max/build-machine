@@ -561,12 +561,22 @@ fn a_checkout_path_outside_the_workspace_fails_validation() {
 }
 
 /// Without `repository` the step checks out the replayed revision, so a
-/// `ref` or `path` would be dropped; it is refused instead.
+/// `ref` would be dropped; it is refused instead.
 #[test]
-fn ref_and_path_without_a_repository_fail_validation() {
-    for with in ["          ref: v0.0.2", "          path: core"] {
-        let error = load(&checkout_of(with)).unwrap_err();
-        assert!(format!("{error:#}").contains("repository와 함께"), "{with}: {error:#}");
+fn a_ref_without_a_repository_fails_validation() {
+    let error = load(&checkout_of("          ref: v0.0.2")).unwrap_err();
+    assert!(format!("{error:#}").contains("repository와 함께"), "{error:#}");
+}
+
+/// core's and the registry's CI check out their own repository into `core/`
+/// or `registry/`, beside the other repositories in `plugins/<name>`.
+#[test]
+fn the_own_repository_is_checked_out_into_a_path() {
+    let parsed = load(&checkout_of("          path: core")).unwrap();
+    assert_eq!(parsed.jobs[0].steps[2].with["path"], "core");
+    for path in ["../core", "/tmp/core"] {
+        let error = load(&checkout_of(&format!("          path: {path}"))).unwrap_err();
+        assert!(format!("{error:#}").contains("GITHUB_WORKSPACE 안의 상대 경로"), "{path}: {error:#}");
     }
 }
 

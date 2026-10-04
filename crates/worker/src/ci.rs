@@ -14,7 +14,7 @@ use anyhow::{bail, Result};
 use build_machine_core::report::{Artifact, Outcome, PlatformResult, Stage, Step as ReportStep};
 use build_machine_core::request::WorkRequest;
 use build_machine_core::workflow::{
-    checkout_target, find_repository, github_context, names_secret, ref_name, stage_of, Adapter, CheckoutTarget, Condition,
+    checkout_path, checkout_target, find_repository, github_context, names_secret, ref_name, stage_of, Adapter, CheckoutTarget, Condition,
     Github, Job, JobStatus, Step,
 };
 use std::collections::BTreeMap;
@@ -160,11 +160,12 @@ fn checkout_step(step: &Step, workspace: &Path, request: &WorkRequest, environme
         bail!("Git history checksum mismatch.");
     }
     let mirror = project_root(request)?.join("history.git");
+    let directory = workspace.join(checkout_path(&step.with)?.as_deref().unwrap_or("."));
     crate::checkout::checkout(
         &crate::checkout::Checkout {
             history,
             mirror: &mirror,
-            workspace,
+            workspace: &directory,
             archive: Path::new(&request.archive),
             revision: &request.snapshot.revision,
             reference: request.snapshot.checkout_ref.as_deref(),
