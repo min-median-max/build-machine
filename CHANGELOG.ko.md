@@ -33,6 +33,7 @@ workflow 재현이 runner처럼 workflow를 실행하므로, 저장소의 CI를 
 - runner 이미지의 패키지를 actions/runner-images처럼 `apt-get install --no-install-recommends`와 phased update 포함으로 설치합니다. 이전에는 apt의 추천 패키지까지 설치해서 이미지에 없는 패키지가 들어왔습니다(Linux 머신에서 `debhelper`부터 `ssh-import-id`까지 22개). 머신 자체의 패키지는 apt 기본값을 유지합니다.
 - 재현은 job이 끝나면 결과에 적힌 산출물을 옆으로 옮긴 뒤 그 job의 workspace를 지우고, `retention` byte 상한을 성공한 뒤뿐 아니라 시작하기 전에도 적용합니다. orm 재현 두 번이 Linux 머신에 21 GB의 workspace를 남겼습니다.
 - 재현 단계는 runner 이미지가 선언한 `/etc/environment`로 실행합니다. 관리 도구 디렉터리 뒤에 `/usr/sbin`, `/sbin`을 포함한 이미지의 `PATH`를 두고 `DEBIAN_FRONTEND=noninteractive`, `ACCEPT_EULA=Y`, `XDG_CONFIG_HOME`을 설정합니다. Linux 워커의 `runuser -l` 로그인은 `/usr/sbin`이 없는 login.defs `ENV_PATH`를 주어서 orm의 `command -v mysqld`가 아무것도 찾지 못했습니다.
+- 재현 단계는 머신이 자기 빌드에 쓰는 `NO_COLOR=1`을 더 이상 받지 않습니다. GitHub runner는 이 변수를 설정하지 않습니다. soksak의 repeat 테스트가 `FORCE_COLOR`를 정하자 node가 `NO_COLOR`를 무시한다는 경고를 출력했고, 그 경고가 테스트의 출력을 깨뜨렸습니다.
 - Linux 게스트가 비운 공간을 Mac에 돌려줍니다. 컨트롤러가 setup, build, release, 재현 뒤에 워커의 새 권한 명령 `reclaim`(`fstrim --all`)을 실행하고, VM 디스크 중 Parallels online compaction이 꺼진 것을 켭니다. 이전에는 지운 파일이 VM 이미지에 할당된 채 남았습니다. 이미지의 겉보기 크기는 가장 컸던 크기에 머물고, 줄어드는 것은 할당된 블록(`du -k`)입니다.
 
 ## 0.1.0

@@ -200,22 +200,32 @@ pub fn image_environment(
     environment
 }
 
-/// The machine's environment for a replay, without signing credentials and
-/// without the machine's own Rust pin: a workflow selects its toolchain itself,
-/// through `rust-toolchain.toml` or rustup, as it does on a runner.
-fn replay_environment(tools: &Tools) -> Result<Vec<(String, String)>> {
-    let base: Vec<(String, String)> = tools
-        .environment
+/// The machine's build environment without what a replay's steps must not
+/// see: signing credentials and the token, and the variables that set up the
+/// machine's own builds.
+pub fn replay_base(environment: &[(String, String)]) -> Vec<(String, String)> {
+    environment
         .iter()
         .filter(|(key, _)| {
             !key.starts_with("APPLE_")
                 && !matches!(
                     key.as_str(),
-                    "TAURI_SIGNING_PRIVATE_KEY" | "TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | "GITHUB_TOKEN" | "RUSTUP_TOOLCHAIN"
+                    "TAURI_SIGNING_PRIVATE_KEY"
+                        | "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+                        | "GITHUB_TOKEN"
+                        | "RUSTUP_TOOLCHAIN"
+                        | "NO_COLOR"
                 )
         })
         .cloned()
-        .collect();
+        .collect()
+}
+
+/// The machine's environment for a replay, without signing credentials and
+/// without the machine's own Rust pin: a workflow selects its toolchain itself,
+/// through `rust-toolchain.toml` or rustup, as it does on a runner.
+fn replay_environment(tools: &Tools) -> Result<Vec<(String, String)>> {
+    let base = replay_base(&tools.environment);
     Ok(match &tools.profile()?.image {
         Some(image) => {
             let home = crate::provision::home_directory()?.to_string_lossy().into_owned();

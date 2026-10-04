@@ -173,3 +173,21 @@ fn a_replay_runs_under_the_runner_image_s_environment() {
     assert_eq!(value("KEEP"), Some("1"));
     assert_eq!(environment.iter().filter(|(name, _)| name == "PATH").count(), 1);
 }
+
+/// A GitHub runner sets no NO_COLOR. The machine's builds set it for their
+/// own output; a step that sets FORCE_COLOR then saw node warn that
+/// NO_COLOR is ignored, and soksak's repeat test failed on that warning.
+#[test]
+fn a_replay_does_not_see_the_variables_of_the_machine_s_builds() {
+    use build_machine_worker::ci::replay_base;
+    let pair = |key: &str, value: &str| (key.to_owned(), value.to_owned());
+    let base = replay_base(&[
+        pair("NO_COLOR", "1"),
+        pair("RUSTUP_TOOLCHAIN", "1.95.0"),
+        pair("GITHUB_TOKEN", "secret"),
+        pair("APPLE_ID", "secret"),
+        pair("CI", "true"),
+        pair("KEEP", "1"),
+    ]);
+    assert_eq!(base, vec![pair("CI", "true"), pair("KEEP", "1")]);
+}
