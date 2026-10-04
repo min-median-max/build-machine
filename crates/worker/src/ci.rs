@@ -865,6 +865,16 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
             runner.set(key, &value);
         }
         runner.set("RUNNER_WORKSPACE", &layout.runner_workspace.to_string_lossy());
+        // The replay's gh comes first on PATH, so no step reaches GitHub
+        // through the machine's own gh.
+        #[cfg(unix)]
+        let gh = {
+            let bin = crate::gh::install(&layout.temp, request.snapshot.pull_request.as_ref())?;
+            runner.add_path(bin.clone());
+            bin
+        };
+        #[cfg(not(unix))]
+        result.limits.push(format!("job {}: the replay's gh is not provided on Windows; a step that runs gh uses the machine's.", job.id));
         // A runner writes the event payload to a file of the job and names it
         // in GITHUB_EVENT_PATH.
         if let Some(payload) = &request.snapshot.event_payload {
@@ -876,6 +886,10 @@ pub fn replay(request: &WorkRequest, tools: &Tools) -> Result<PlatformResult> {
         }
         let status =
             run_job(job, runner, &workspace, request, &base, tools, &mut result, &mut stages, &mut failure, &github, &pages)?;
+        #[cfg(unix)]
+        for merge in crate::gh::merges(&gh)? {
+            result.limits.push(format!("job {}: dry-run: gh pr merge did not merge; it recorded {merge}.", job.id));
+        }
         finished.insert(
             job.id.clone(),
             match status {

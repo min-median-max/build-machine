@@ -196,6 +196,7 @@ pub fn build_operation(request: &JobRequest, observer: build_machine_controller:
         workflow: request.workflow.clone().filter(|path| !path.trim().is_empty()),
         event: request.event.clone(),
         event_payload: None,
+        pull_request: None,
         reference: request.ref_name.clone().filter(|value| !value.trim().is_empty()),
         result_file: None,
         observer: Some(observer),

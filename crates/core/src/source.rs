@@ -20,6 +20,16 @@ pub enum SourceMode {
     Ref,
 }
 
+/// A pull request a replay declares: its number, its head commit and the
+/// files it changes, which the replay's `gh pr view` and `gh pr merge`
+/// answer from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullRequest {
+    pub number: u64,
+    pub head_sha: String,
+    pub files: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -39,6 +49,9 @@ pub struct Snapshot {
     /// replay was given one (`--event-payload`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_payload: Option<serde_json::Value>,
+    /// The pull request that the replay's `gh` answers for (`--pull-request`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<PullRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_ref: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

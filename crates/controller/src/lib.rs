@@ -33,6 +33,8 @@ pub struct Operation {
     pub event: String,
     /// The payload of the replayed event (`--event-payload`), a JSON object.
     pub event_payload: Option<serde_json::Value>,
+    /// The pull request the replay's `gh` answers for (`--pull-request`).
+    pub pull_request: Option<build_machine_core::source::PullRequest>,
     pub reference: Option<String>,
     pub result_file: Option<PathBuf>,
     /// Where each produced line goes, besides the log file. The command line

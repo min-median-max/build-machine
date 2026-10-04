@@ -40,6 +40,7 @@ fn archive_project(state: &Path, project: &Path, reference: Option<&str>) -> Res
         workflow_path: None,
         event: None,
         event_payload: None,
+        pull_request: None,
         requested_ref: None,
         stage_counts: Default::default(),
         framework: None,
@@ -96,6 +97,7 @@ pub fn for_run(operation: &Operation) -> Result<Snapshot> {
         workflow_path: None,
         event: None,
         event_payload: None,
+        pull_request: None,
         requested_ref: None,
         stage_counts: Default::default(),
         framework: None,
@@ -182,6 +184,7 @@ pub fn for_replay(operation: &Operation, state: &Path) -> Result<Replay> {
     snapshot.workflow_path = Some(selected.path.clone());
     snapshot.event = Some(event);
     snapshot.event_payload = operation.event_payload.clone();
+    snapshot.pull_request = operation.pull_request.clone();
     snapshot.requested_ref = operation.reference.clone();
     snapshot.stage_counts = workflow::stage_counts(&selected);
     Ok(Replay { snapshot, workflow: selected })

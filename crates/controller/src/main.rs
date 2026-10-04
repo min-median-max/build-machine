@@ -106,6 +106,10 @@ struct Replay {
     /// workflow that reads `github.event`.
     #[arg(long = "event-payload")]
     event_payload: Option<PathBuf>,
+    /// A JSON file `{number, head_sha, files}` with the pull request that the
+    /// replay's `gh pr view` and `gh pr merge` answer for.
+    #[arg(long = "pull-request")]
+    pull_request: Option<PathBuf>,
     /// A commit, branch or tag to replay. Omitted means the current tree.
     #[arg(long = "ref")]
     reference: Option<String>,
@@ -252,6 +256,16 @@ fn build_operation(
 ) -> Result<Operation> {
     let event_payload =
         replay.as_ref().and_then(|replay| replay.event_payload.as_deref()).map(read_event_payload).transpose()?;
+    let pull_request = replay
+        .as_ref()
+        .and_then(|replay| replay.pull_request.as_deref())
+        .map(|path| -> Result<build_machine_core::source::PullRequest> {
+            let text = std::fs::read_to_string(path)
+                .with_context(|| format!("pull request 파일을 읽지 못했어요: {}", path.display()))?;
+            serde_json::from_str(&text)
+                .with_context(|| format!("pull request 파일은 {{number, head_sha, files}} JSON이어야 해요: {}", path.display()))
+        })
+        .transpose()?;
     Ok(Operation {
         root: root.to_path_buf(),
         machine: machine.clone(),
@@ -266,6 +280,7 @@ fn build_operation(
         workflow: replay.as_ref().and_then(|replay| replay.workflow.clone()),
         event: replay.as_ref().map(|replay| replay.event.clone()).unwrap_or_else(|| "workflow_dispatch".to_owned()),
         event_payload,
+        pull_request,
         reference: replay.as_ref().and_then(|replay| replay.reference.clone()),
         result_file: selection.result_file,
         observer: Some(printing_observer()),

@@ -85,6 +85,7 @@ fn replay(fixture: &Fixture) -> build_machine_core::report::RunReport {
         workflow: Some(".github/workflows/ci.yml".to_owned()),
         event: "push".to_owned(),
         event_payload: None,
+        pull_request: None,
         reference: None,
         result_file: None,
         observer: None,

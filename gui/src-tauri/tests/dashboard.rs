@@ -22,6 +22,7 @@ fn snapshot(project: &str) -> Snapshot {
         workflow_path: None,
         event: None,
         event_payload: None,
+        pull_request: None,
         requested_ref: None,
         stage_counts: BTreeMap::new(),
         framework: None,

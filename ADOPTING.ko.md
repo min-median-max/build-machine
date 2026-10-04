@@ -178,6 +178,14 @@ skipped로 기록하고, 그 job을 기다리는 job은 `skipped`를 봅니다. 
 `needs.<job>.outputs`, 단계 출력과 그 밖의 context는 검증에서 실패합니다. 운영체제마다 따로 재현하므로 다른 운영체제의 job을
 `needs`로 기다릴 수 없습니다.
 
+**gh** — 재현하는 모든 job은 PATH 맨 앞에서 재현 자신의 `gh`를 찾으므로(Linux와 macOS),
+단계가 머신의 `gh`를 통해 GitHub에 닿지 않습니다. 이 `gh`는
+`gh pr view <number> --json files,headRefOid,number [--jq <filter>]`에
+`ci run --pull-request <file>`이 선언한 pull request(`{number, head_sha, files}` JSON 객체)로
+답합니다. 선언한 head commit과 같은 `--match-head-commit`을 준 `gh pr merge <number> --squash`
+(또는 `--merge`, `--rebase`)는 제한으로 기록하는 dry run이고, 다른 commit이면 실패합니다. 그
+밖의 `gh` 명령과 선언한 pull request 없는 `gh pr`은 자신을 밝히며 실패합니다.
+
 **재사용 workflow** — `uses: ./.github/workflows/<file>`(그리고 `name`, `needs`,
 `permissions`만)을 쓴 job은 그 자리에서 같은 저장소의 그 workflow의 job을 실행합니다. 그
 workflow는 `on: workflow_call`을 선언해야 합니다. 그 job들은 `<부르는 job>/<불린 job>`으로

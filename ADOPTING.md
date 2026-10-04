@@ -207,6 +207,16 @@ and the jobs that need it see `skipped`. `needs.<job>.outputs`, step outputs and
 other contexts in a job's `if` fail validation. A job cannot need a job of another operating system, because each
 operating system is replayed on its own.
 
+**gh** — every replayed job finds the replay's own `gh` first on its PATH
+(Linux and macOS), so a step never reaches GitHub through the machine's `gh`.
+It answers `gh pr view <number> --json files,headRefOid,number [--jq <filter>]`
+from the pull request that `ci run --pull-request <file>` declares, a JSON
+object `{number, head_sha, files}`; `gh pr merge <number> --squash` (or
+`--merge`, `--rebase`) with `--match-head-commit` equal to the declared head
+commit is a dry run recorded as a limit, and a different commit fails. Any
+other `gh` command, and `gh pr` without a declared pull request, fails and
+names itself.
+
 **Reusable workflows** — a job with `uses: ./.github/workflows/<file>` (and
 only `name`, `needs` and `permissions`) runs the jobs of that workflow of the
 same repository, which must declare `on: workflow_call`, in its place: they are

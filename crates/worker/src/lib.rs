@@ -10,6 +10,7 @@ pub mod checkout;
 pub mod ci;
 #[cfg(target_os = "linux")]
 pub mod desktop;
+pub mod gh;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod package;
